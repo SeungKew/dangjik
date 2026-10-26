@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>입력양식 등록 (엑셀 업로드)</h2>
+<p>
+  당직명령시스템 입력양식(.xlsx)을 업로드하면 다음 두 시트의 내용이 DB에 반영됩니다.
+</p>
+<ul>
+  <li><b>직원명부(마스터)</b> — 사번 기준 신규 등록/갱신 (당직그룹·순번·부서·활성 여부)</li>
+  <li><b>초기당직이력</b> — 중복 없이 당직 이력 적재</li>
+</ul>
+<form method="post" enctype="multipart/form-data" action="{{ url_for('upload') }}">
+  <input type="file" name="file" accept=".xlsx" required>
+  <button type="submit">업로드 및 반영</button>
+</form>
+<p class="small">예: 당직명령시스템_2월통합_입력양식.xlsx (업로드 후 서버에서 임시 삭제)</p>
+{% endblock %}

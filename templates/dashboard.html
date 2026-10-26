@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>배정 현황 — {{ year_month }}</h2>
+
+<div class="cards">
+  <span>직원 <b>{{ counts.employees }}</b>명</span>
+  <span>배정이력 <b>{{ counts.history }}</b>건</span>
+  <span>스킵 대기 <b>{{ counts.skipped }}</b>명</span>
+  <span>수동 배정 <b>{{ counts.overrides }}</b>건</span>
+</div>
+
+<form class="toolbar" method="get" action="{{ url_for('dashboard') }}">
+  <input type="text" name="month" value="{{ year_month }}" placeholder="YYYY-MM" size="7">
+  <button type="submit">조회</button>
+  <button type="button" onclick="location='{{ url_for('dashboard', month=year_month) }}'">초기화</button>
+</form>
+<form class="toolbar" method="post" action="{{ url_for('regenerate') }}">
+  <input type="hidden" name="month" value="{{ year_month }}">
+  <button type="submit" onclick="return confirm('{{ year_month }} 전체를 다시 배정합니다. 계속할까요?')">
+    이 달 전체 재배정 (수동 배정·변동 반영)
+  </button>
+  <span class="small">※ 재배정 시 해당 월의 기존 자동 배정 기록은 덮어씁니다(수동 배정은 유지).</span>
+</form>
+
+<table>
+  <tr><th>날짜</th><th>요일</th><th>분류</th><th>성명</th><th>사번</th><th>당직그룹</th><th>비고</th></tr>
+  {% for r in rows %}
+  <tr class="{{ r.day_class }} {{ 'manual-row' if r.kind }}">
+    <td>{{ r.date }}</td>
+    <td>{{ r.dow }}{% if r.holiday_name %} · {{ r.holiday_name }}{% endif %}</td>
+    <td>{{ r.duty_type }}</td>
+    <td>{{ r.name }}</td>
+    <td>{{ r.emp_no }}</td>
+    <td>{{ r.group }}</td>
+    <td>{{ r.kind }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="small">색 구분: 핑크 = 주말 · 주황 = 공휴일 · 노랑 = 수동 배정. 공휴일은 요일 옆에 이름을 표시합니다.</p>
+{% endblock %}

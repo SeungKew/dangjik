@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>시스템 관리</h2>
+
+<h3>스킵 정책 설정</h3>
+<form method="post" action="{{ url_for('admin_skip_policy') }}">
+  <label><input type="checkbox" name="skip_current_month_only" {{ 'checked' if skip_current_month_only }}>
+    해당 월에만 스킵 정책 반영</label>
+  <button type="submit">정책 저장</button>
+</form>
+<p class="small">
+  체크: 해당 월에 이미 정규 근무한 직원을 스킵합니다. 이전 달 근무는 스킵 기준에 포함하지 않습니다.<br>
+  해제: 이전 28일 이내 정규 근무한 직원을 스킵합니다.<br>
+  두 정책 모두 벌당직·대근 예외와 스킵 순번의 익익월 복귀를 유지합니다.
+  설정은 DB에 저장되며 이후 배정 생성에 적용됩니다. 기존 생성 결과는 자동으로 바뀌지 않습니다.
+</p>
+
+<h3>DB 현황</h3>
+<div class="cards">
+  <span>직원 <b>{{ counts.employees }}</b>명 (활성 {{ counts.active }})</span>
+  <span>당직이력 <b>{{ counts.history }}</b>건</span>
+  <span>스킵 큐 <b>{{ counts.skipped }}</b>건</span>
+  <span>수동 배정 <b>{{ counts.overrides }}</b>건</span>
+</div>
+
+<h3>월 데이터 삭제 (되돌리기)</h3>
+<p class="small">
+  해당 월의 배정 기록을 지우고 생성 전 상태로 되돌립니다 (순번 포인터·스킵 큐 포함).
+  수동 배정(벌당직/대근)은 삭제되지 않고 유지됩니다.<br>
+  · 본 기능 도입 후 만든 월은 직원·수동 배정·정책 설정이 같으면 스냅샷으로 복원 후 재생성 시 <b>처음과 동일한 결과</b>가 나옵니다.<br>
+  · 도입 전에 이미 생성돼 있던 월(스냅샷 없음)은 이력 기반 추정 롤백이라 재생성 결과가 달라질 수 있고,<br>
+  &nbsp;&nbsp;이전 달을 지우면 이후 달 생성 결과의 기준도 무너지므로 이후 월도 지우고 재생성을 권장합니다.
+</p>
+<table>
+  <tr><th>기록된 월</th><th>이력 건수</th></tr>
+  {% for m, n in months %}
+  <tr><td>{{ m }}</td><td>{{ n }}</td></tr>
+  {% else %}
+  <tr><td colspan="2">기록된 월이 없습니다</td></tr>
+  {% endfor %}
+</table>
+<form method="post" action="{{ url_for('admin_delete_month') }}"
+      onsubmit="return confirm('정말 해당 월의 배정 데이터를 삭제할까요?')">
+  <label>연월 <input type="month" name="month" placeholder="YYYY-MM" required size="10"></label>
+  <label><input type="checkbox" name="backup" checked> 삭제 전 백업 사본 생성 (.db)</label>
+  <label>확인 문구 <input type="text" name="confirm" placeholder="'삭제' 를 입력하세요" required size="16"></label>
+  <button type="submit" class="danger">월 데이터 삭제</button>
+</form>
+
+<h3>전체 DB 초기화 (위험)</h3>
+<p class="small">
+  <b>duty_system_v3.db</b>의 모든 데이터(직원 마스터·당직이력·스킵 큐·수동 배정·순번 포인터)를
+  삭제하고 빈 DB로 초기화합니다. 실행 후 <b>"입력양식 등록"</b>부터 직원 데이터를 다시 적재해야 합니다.
+  초기화 전 백업을 생성하면 안전합니다. 원본 v2 DB(duty_system_v2.db)는 영향받지 않습니다.
+</p>
+<form method="post" action="{{ url_for('admin_reset_db') }}"
+      onsubmit="return confirm('정말 전체 DB를 삭제하고 초기화할까요? 되돌릴 수 없습니다.')">
+  <label><input type="checkbox" name="backup" checked> 초기화 전 백업 사본 생성 (.db)</label>
+  <label>확인 문구 <input type="text" name="confirm" placeholder="'초기화' 를 입력하세요" required size="16"></label>
+  <button type="submit" class="danger">전체 DB 초기화</button>
+</form>
+{% endblock %}

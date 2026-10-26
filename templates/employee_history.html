@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>직원 변동 이력</h2>
+<p class="small">전입·전출·제외·활성복구·재전입과 직원 정보 변경을 기록합니다.
+  변동일은 입력한 날짜이며 기록 시각은 한국 시간입니다. 이 기능 도입 후 저장한 변경부터 조회할 수 있습니다.</p>
+<form class="toolbar" method="get" action="{{ url_for('employee_history') }}">
+  {% if emp_id is not none %}<input type="hidden" name="emp_id" value="{{ emp_id }}">{% endif %}
+  <label>직원 검색 <input type="text" name="q" value="{{ keyword }}" placeholder="성명·사번·이전 정보"></label>
+  <label>변동 종류 <select name="type">
+    <option value="">전체</option>
+    {% for kind in ['전입', '전출', '재전입', '제외', '활성복구', '정보변경', '초기등록', '엑셀변경'] %}
+    <option value="{{ kind }}" {{ 'selected' if kind == change_type }}>{{ kind }}</option>
+    {% endfor %}
+  </select></label>
+  <button type="submit">검색</button>
+  <a href="{{ url_for('employee_history') }}">전체 이력</a> · <a href="{{ url_for('employees') }}">직원 관리</a>
+</form>
+<p>총 {{ total }}건 · 전체 표시 (기록 최신순)</p>
+<div style="overflow-x:auto">
+<table>
+  <tr><th>변동일</th><th>기록 시각</th><th>종류</th><th>성명 / 사번</th><th>변경 전 → 후</th><th>사유</th><th>등록 경로</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.effective_date }}</td><td>{{ r.recorded_at }}</td><td>{{ r.change_type }}</td>
+    <td><a href="{{ url_for('employee_history', emp_id=r.emp_id) }}">{{ r.name }}</a><br>{{ r.emp_no }}</td>
+    <td style="text-align:left">{% for change in r.changes %}{{ change }}<br>{% else %}상태 유지 · {{ r.change_type }} 기록{% endfor %}</td>
+    <td style="white-space:pre-wrap">{{ r.reason }}</td><td>{{ r.source }}</td>
+  </tr>
+  {% else %}<tr><td colspan="7">조회할 변동 이력이 없습니다.</td></tr>{% endfor %}
+</table>
+</div>
+{% endblock %}

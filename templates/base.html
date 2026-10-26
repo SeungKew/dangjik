@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>본사 당직명령 시스템</title>
+<style>
+  body { font-family: 'Malgun Gothic', AppleGothic, sans-serif; margin: 0; background: #f6f7f9; color: #222; }
+  header { background: #1a3a63; color: #fff; padding: 10px 20px; }
+  header h1 { display: inline-block; font-size: 18px; margin: 0; }
+  nav { display: inline-block; margin-left: 24px; }
+  nav a { color: #cfe0f5; text-decoration: none; margin-right: 14px; }
+  nav a.active { color: #fff; font-weight: bold; border-bottom: 2px solid #fff; padding-bottom: 2px; }
+  main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+  .flash { list-style: none; padding: 0; }
+  .flash li { padding: 8px 12px; border-radius: 4px; margin-bottom: 6px; }
+  .flash .success { background: #dff0d8; color: #2d6a30; }
+  .flash .error { background: #f2dede; color: #a94442; }
+  .flash .info { background: #d9edf7; color: #2a6478; }
+  table { border-collapse: collapse; width: 100%; background: #fff; font-size: 14px; }
+  th, td { border: 1px solid #d7dbe0; padding: 6px 8px; text-align: center; }
+  th { background: #eef1f5; }
+  .weekend { background: #fdf3f3; }
+  .holiday { background: #fff4e5; }
+  .manual-row { background: #fff8e1; }
+  form.inline { display: inline; }
+  .toolbar { margin: 10px 0; }
+  .toolbar input, .toolbar select, form.inline select, form.inline input { padding: 4px; }
+  button { padding: 5px 12px; cursor: pointer; }
+  button.danger { background: #a94442; color: #fff; border: 1px solid #843534; }
+  .cards span { display: inline-block; background: #fff; border: 1px solid #d7dbe0; border-radius: 6px;
+                padding: 10px 16px; margin-right: 10px; }
+  .cards b { font-size: 18px; }
+  .small { color: #666; font-size: 12px; }
+  input[type=text], input[type=date], input[type=number], select { width: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>본사 당직명령 시스템</h1>
+  <nav>
+    {% for endpoint, label in nav_items %}
+    <a href="{{ url_for(endpoint) }}" class="{{ 'active' if endpoint == request.endpoint }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+</header>
+<main>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <ul class="flash">{% for category, message in messages %}<li class="{{ category }}">{{ message }}</li>{% endfor %}</ul>
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

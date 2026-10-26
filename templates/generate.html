@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>당직 배정 생성</h2>
+<p>지정 월(1일~말일) 전체의 당직을 자동 배정합니다.
+  평일 = 숙직 1명, 주말·공휴일 = 일직 2명 + 숙직 1명 (연속근무 스킵형 규칙 적용).</p>
+<form method="post" action="{{ url_for('generate') }}">
+  <label>연월 <input type="month" name="month" placeholder="YYYY-MM" required size="10"></label>
+  <button type="submit">배정 생성</button>
+</form>
+<p class="small">※ 동일 월을 다시 생성하면 기존 자동 배정 기록을 덮어쓰고 다시 배정합니다(수동 배정은 유지).</p>
+{% endblock %}
