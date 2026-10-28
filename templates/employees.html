@@ -1,18 +1,21 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>직원 관리 (전입·전출·승진·부서 이동)</h2>
-<p class="small">전입자는 해당 그룹의 마지막 순번에 등록됩니다. 전출 처리하면 이후 정규 배정에서 제외되며
-  기존 당직 이력과 수동 배정은 보존됩니다. 이미 생성된 명령서는 자동으로 바뀌지 않습니다.
-  재전입자는 기존 직원의 상태를 "활성"으로 변경하세요.
-  승진 등으로 그룹이 바뀌면 <b>당직그룹·순번</b>을 수정하세요.</p>
-<p class="small">변동일과 사유는 <a href="{{ url_for('employee_history') }}">직원 변동 이력</a>에 저장됩니다.
-  저장 시 현재 상태에 즉시 반영되며, 변동일은 기록용입니다. 부서 사정 등 일시 제외는 상태를 "제외"로 바꾸고 사유를 입력하세요.</p>
-<p class="small">일직_1직급은 정규 자동 배정 대상에 포함되지 않습니다. 예외 근무는 "수동 예외 배정"에서 등록하면 일직 정 자리에 반영됩니다.</p>
+<div class="card-box" style="margin-top:0">
+  <p class="small" style="margin-top:0">
+    전입자는 해당 그룹의 마지막 순번에 등록됩니다. 전출 처리하면 이후 정규 배정에서 제외되며 기존 당직 이력과 수동 배정은 보존됩니다. 이미 생성된 명령서는 자동으로 바뀌지 않습니다.
+    재전입자는 기존 직원의 상태를 "활성"으로 변경하세요. 승진 등으로 그룹이 바뀌면 <b>당직그룹·순번</b>을 수정하세요.
+  </p>
+  <p class="small" style="margin-bottom:0">
+    변동일과 사유는 <a href="{{ url_for('employee_history') }}"><b>직원 변동 이력</b></a>에 저장됩니다. 저장 시 현재 상태에 즉시 반영되며, 변동일은 기록용입니다. 일직_1직급은 정규 자동 배정 대상에 포함되지 않으며 예외 근무는 "수동 예외 배정"에서 등록하면 일직 정 자리에 반영됩니다.
+  </p>
+</div>
+
 <h3>전입 직원 등록</h3>
 <form class="toolbar" method="post" action="{{ url_for('employee_register') }}">
-  <label>성명 <input type="text" name="name" required size="10"></label>
+  <label>성명 <input type="text" name="name" required placeholder="성명" size="10"></label>
   <label>사번 <input type="text" name="emp_no" required pattern="[0-9]{8}" minlength="8" maxlength="8" inputmode="numeric" placeholder="8자리 숫자" size="10"></label>
-  <label>부서 <input type="text" name="dept" required size="14"></label>
+  <label>부서 <input type="text" name="dept" required placeholder="부서명" size="14"></label>
   <label>당직그룹 <select name="duty_group" required>
     {% for g in groups %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
   </select></label>
@@ -20,34 +23,54 @@
   <label>사유 <input type="text" name="reason" placeholder="예: 본사 전입" size="16"></label>
   <button type="submit">전입 등록</button>
 </form>
+
 <h3>직원 목록</h3>
 <form class="toolbar" method="get" action="{{ url_for('employees') }}">
-  <select name="group">
-    <option value="all" {{ 'selected' if cur_group == 'all' }}>전체 그룹</option>
-    {% for g in groups %}
-    <option value="{{ g }}" {{ 'selected' if cur_group == g }}>{{ g }}</option>
-    {% endfor %}
-  </select>
-  <select name="status">
-    <option value="all" {{ 'selected' if cur_status == 'all' }}>전체</option>
-    <option value="active" {{ 'selected' if cur_status == 'active' }}>활성</option>
-    <option value="inactive" {{ 'selected' if cur_status == 'inactive' }}>제외</option>
-  </select>
-  <input type="text" name="q" value="{{ cur_q }}" placeholder="성명/사번/부서 검색" size="16">
+  <label>그룹
+    <select name="group">
+      <option value="all" {{ 'selected' if cur_group == 'all' }}>전체 그룹</option>
+      {% for g in groups %}
+      <option value="{{ g }}" {{ 'selected' if cur_group == g }}>{{ g }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>상태
+    <select name="status">
+      <option value="all" {{ 'selected' if cur_status == 'all' }}>전체 상태</option>
+      <option value="active" {{ 'selected' if cur_status == 'active' }}>활성</option>
+      <option value="inactive" {{ 'selected' if cur_status == 'inactive' }}>제외</option>
+    </select>
+  </label>
+  <label>검색 <input type="text" name="q" value="{{ cur_q }}" placeholder="성명 / 사번 / 부서 검색" size="18"></label>
   <button type="submit">검색</button>
 </form>
 
-<div style="overflow-x:auto">
-<table>
-  <tr><th>순번</th><th>성명</th><th>사번</th><th>부서</th><th>당직그룹</th><th>상태</th><th>변동일</th><th>변경 사유</th><th>저장</th><th>전출</th><th>이력</th></tr>
+<div class="employee-scroll">
+<table class="employee-table">
+  <thead>
+  <tr>
+    <th style="width: 44px;">순번</th>
+    <th style="width: 66px;">성명</th>
+    <th style="width: 72px;">사번</th>
+    <th>부서</th>
+    <th style="width: 112px;">당직그룹</th>
+    <th style="width: 58px;">상태</th>
+    <th style="width: 116px;">변동일</th>
+    <th>사유</th>
+    <th style="width: 44px;">저장</th>
+    <th style="width: 54px;">전출</th>
+    <th style="width: 36px;">이력</th>
+  </tr>
+  </thead>
+  <tbody>
   {% for e in rows %}
   <tr>
-      <td><input form="employee-{{ e[0] }}" type="number" name="group_idx" value="{{ e[2] }}" style="width:56px"></td>
-      <td><input form="employee-{{ e[0] }}" type="text" name="name" value="{{ e[3] }}" style="width:80px"></td>
-      <td>{{ e[4] }}</td>
-      <td><input form="employee-{{ e[0] }}" type="text" name="dept" value="{{ e[5] }}" style="width:110px"></td>
+      <td><input form="employee-{{ e[0] }}" type="number" name="group_idx" value="{{ e[2] }}" style="width: 42px; text-align: center;"></td>
+      <td><input form="employee-{{ e[0] }}" type="text" name="name" value="{{ e[3] }}" style="width: 62px; font-weight: 600;"></td>
+      <td><code>{{ e[4] }}</code></td>
+      <td><input form="employee-{{ e[0] }}" type="text" name="dept" value="{{ e[5] }}" style="width: 100%; min-width: 80px; max-width: 110px;"></td>
       <td>
-        <select form="employee-{{ e[0] }}" name="duty_group" style="width:120px">
+        <select form="employee-{{ e[0] }}" name="duty_group" style="width: 110px;">
           {% for g in groups %}
           <option value="{{ g }}" {{ 'selected' if e[1] == g }}>{{ g }}</option>
           {% endfor %}
@@ -55,20 +78,22 @@
       </td>
       <td>
         {% set is_on = e[6] == 1 %}
-        <select form="employee-{{ e[0] }}" name="is_active_sel" style="width:76px">
+        <select form="employee-{{ e[0] }}" name="is_active_sel" style="width: 56px; font-weight: 500;" class="{{ 'badge-sukjig' if is_on else '' }}">
           <option value="1" {{ 'selected' if is_on }}>활성</option>
           <option value="0" {{ 'selected' if not is_on }}>제외</option>
         </select>
       </td>
-      <td><input form="employee-{{ e[0] }}" type="date" name="effective_date" value="{{ change_date }}" required></td>
-      <td><input form="employee-{{ e[0] }}" type="text" name="reason" placeholder="예: 부서 사정으로 제외" size="18"></td>
+      <td><input form="employee-{{ e[0] }}" type="date" name="effective_date" value="{{ change_date }}" required style="width: 114px;"></td>
+      <td><input form="employee-{{ e[0] }}" type="text" name="reason" placeholder="사유 입력" style="width: 100%; min-width: 75px; max-width: 120px;"></td>
       <td><form id="employee-{{ e[0] }}" method="post" action="{{ url_for('employee_update', emp_id=e[0]) }}"><button type="submit">저장</button></form></td>
       <td><button class="danger" type="submit" form="employee-{{ e[0] }}"
                   formaction="{{ url_for('employee_transfer_out', emp_id=e[0]) }}"
-                  onclick="return confirm('입력한 변동일과 사유로 전출 처리하시겠습니까? 기존 당직 이력은 보존됩니다.');">전출 처리</button></td>
-      <td><a href="{{ url_for('employee_history', emp_id=e[0]) }}">이력</a></td>
+                  onclick="return confirm('입력한 변동일과 사유로 전출 처리하시겠습니까? 기존 당직 이력은 보존됩니다.');"
+                  title="전출 처리">전출</button></td>
+      <td><a href="{{ url_for('employee_history', emp_id=e[0]) }}" style="font-size: 12px; font-weight: 500;">이력</a></td>
   </tr>
   {% endfor %}
+  </tbody>
 </table>
 </div>
 {% endblock %}

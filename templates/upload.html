@@ -1,28 +1,42 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>입력양식 등록 (원본 당직명령 엑셀)</h2>
-<p>월별 원본 당직명령(.xlsx)을 그대로 등록할 수 있습니다. 예: 2026년_7월_본사_당직명령.xlsx</p>
-<ul>
-  <li><b>순서</b> — 직원·부서·평일/휴일별 순서와 제외 상태, 스킵·복귀월을 반영합니다.</li>
-  <li><b>당직명령</b> — 해당 월의 실제 당직 이력과 다음 달 시작 순번을 반영합니다.</li>
-</ul>
-<p>‘기준 월말 DB 구성’ 선택 시 DB를 자동 백업한 뒤, <b>선택한 월과 이후의 당직 생성분을 원본 기준으로 대체</b>합니다.
-이전 월 이력과 수동 예외·직원 변동 이력·시스템 설정은 보존합니다.
-원본 명부에 없는 기존 직원은 이력을 유지하며 정규 배정에서 제외합니다.</p>
-<p>예: 7월 원본으로 기준 DB 구성 → 8월 원본을 ‘직원 명부만 갱신’으로 등록 → 8월 배정 생성.
-원본 등록만으로 생성 규칙의 차이가 해결되는 것은 아니므로 생성 후 원본과 비교해 주세요.</p>
-<form method="post" enctype="multipart/form-data" action="{{ url_for('upload') }}">
-  <label>반영 범위
-    <select name="import_scope">
-      <option value="baseline">기준 월말 DB 구성 (해당 월 이후 생성분 대체)</option>
-      <option value="roster">직원 명부만 갱신 (이력·스킵·시작 순번 보존)</option>
-    </select>
-  </label>
-  <input type="file" name="file" accept=".xlsx" required>
-  <button type="submit">엑셀 등록 및 반영</button>
-</form>
-<p class="small">기존 입력양식(직원명부(마스터)·초기당직이력(2월))도 계속 사용할 수 있습니다.
-구형 .xls 파일은 Excel에서 .xlsx로 저장한 뒤 등록하세요.
-원본 내 성명·사번 오류나 평일/휴일 차이는 등록 결과에 표시됩니다.
-스킵 내역 표가 없는 파일(예: 10월)은 직원 명부만 갱신으로 등록해 기존 복귀 대기를 유지하세요.</p>
+
+<div class="card-box" style="margin-top: 0;">
+  <p style="margin-top: 0; color: var(--text-secondary);">
+    월별 원본 당직명령(<code>.xlsx</code>)을 그대로 등록할 수 있습니다. (예: <code>2026년_7월_본사_당직명령.xlsx</code>)
+  </p>
+
+  <ul class="small" style="line-height: 1.8;">
+    <li><strong>순서 시트</strong> — 직원·부서·평일/휴일별 순서와 제외 상태, 스킵·복귀월을 반영합니다.</li>
+    <li><strong>당직명령 시트</strong> — 해당 월의 실제 당직 이력과 다음 달 시작 순번을 반영합니다.</li>
+  </ul>
+
+  <p class="small">
+    ‘기준 월말 DB 구성’ 선택 시 DB를 자동 백업한 뒤, <b>선택한 월과 이후의 당직 생성분을 원본 기준으로 대체</b>합니다.
+    이전 월 이력과 수동 예외·직원 변동 이력·시스템 설정은 보존합니다.
+    원본 명부에 없는 기존 직원은 이력을 유지하며 정규 배정에서 제외합니다.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('upload') }}" class="toolbar" style="margin: 20px 0;">
+    <label>반영 범위
+      <select name="import_scope" style="font-weight: 500;">
+        <option value="baseline">기준 월말 DB 구성 (해당 월 이후 생성분 대체)</option>
+        <option value="roster">직원 명부만 갱신 (이력·스킵·시작 순번 보존)</option>
+      </select>
+    </label>
+    <label>파일 선택
+      <input type="file" name="file" accept=".xlsx" required style="padding: 5px;">
+    </label>
+    <button type="submit">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+      엑셀 등록 및 반영
+    </button>
+  </form>
+
+  <p class="small" style="margin-bottom: 0;">
+    ※ 기존 입력양식(직원명부 마스터·2월 초기당직이력)도 계속 사용할 수 있습니다.<br>
+    ※ 구형 .xls 파일은 Excel에서 .xlsx로 저장한 뒤 등록하세요. 스킵 내역 표가 없는 파일(예: 10월)은 직원 명부만 갱신으로 등록해 기존 복귀 대기를 유지하세요.
+  </p>
+</div>
 {% endblock %}

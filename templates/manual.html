@@ -1,26 +1,32 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>수동 예외 배정 (벌당직/대근)</h2>
-<p class="small">등록된 수동 배정은 배정 생성 시 최우선으로 반영됩니다. 이미 생성된 월은 "즉시 재배정"을 체크하세요.</p>
-<p class="small">사유에 "벌당직" 또는 "대근"이 명시된 근무는 이후 정규 배정의 스킵 기준에서 제외되며, 근무 이력은 보존됩니다. 스킵 범위는 시스템 관리의 정책 설정을 따릅니다.</p>
-<form method="post" action="{{ url_for('manual') }}">
-  <label>날짜 <input type="date" name="target_date" required></label>
-  <br>
-  <label>대상자 검색
-    <input type="text" id="emp_search" placeholder="이름 또는 사번 입력" autocomplete="off" size="14">
-  </label>
-  <label>대상자
-    <select name="emp_no" id="emp_select" required>
-      {% for opt in employee_options %}
-      {% set parts = opt.split('|') %}
-      <option value="{{ parts[3] }}">{{ parts[0] }} · 순번{{ parts[1] }} · {{ parts[2] }} ({{ parts[3] }})</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>사유 <input type="text" name="reason" placeholder="예: 벌당직, 대근" required size="16"></label>
-  <label><input type="checkbox" name="regen" checked> 즉시 해당 월 전체 재배정 반영</label>
-  <button type="submit">등록</button>
-</form>
+<h2>수동 예외 배정 (벌당직 / 대근)</h2>
+
+<div class="card-box" style="margin-top: 0;">
+  <p class="small" style="margin-top: 0;">
+    등록된 수동 배정은 배정 생성 시 최우선으로 반영됩니다. 이미 생성된 월은 "즉시 재배정"을 체크하세요.<br>
+    사유에 <strong>"벌당직"</strong> 또는 <strong>"대근"</strong>이 명시된 근무는 이후 정규 배정의 스킵 기준에서 제외되며 근무 이력은 보존됩니다.
+  </p>
+
+  <form method="post" action="{{ url_for('manual') }}" class="toolbar" style="margin-bottom: 0;">
+    <label>근무일 <input type="date" name="target_date" required></label>
+    <label>대상자 검색
+      <input type="text" id="emp_search" placeholder="이름 또는 사번 입력" autocomplete="off" size="14">
+    </label>
+    <label>대상자
+      <select name="emp_no" id="emp_select" required style="min-width: 220px;">
+        {% for opt in employee_options %}
+        {% set parts = opt.split('|') %}
+        <option value="{{ parts[3] }}">{{ parts[0] }} · 순번{{ parts[1] }} · {{ parts[2] }} ({{ parts[3] }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>사유 <input type="text" name="reason" placeholder="예: 벌당직, 대근" required size="16"></label>
+    <label style="margin-left: 4px;"><input type="checkbox" name="regen" checked> 즉시 해당 월 전체 재배정 반영</label>
+    <button type="submit" style="margin-left: auto;">수동 등록</button>
+  </form>
+</div>
+
 <script>
 (function () {
   var search = document.getElementById('emp_search');
@@ -37,7 +43,6 @@
       if (hit) { matches++; if (first === null) first = opt; }
     }
     if (q) {
-      // 정확히 1건이면 자동 선택, 0건이면 선택 해제(등록 방지), 여러 건이면 현재 선택 유지
       if (matches === 1) sel.value = first.value;
       else if (matches === 0) sel.value = '';
     }
@@ -46,19 +51,30 @@
 </script>
 
 <h3>등록된 수동 배정 목록</h3>
+<div class="assignment-scroll" style="max-height: 50vh;">
 <table>
-  <tr><th>날짜</th><th>그룹</th><th>사번</th><th>성명</th><th>사유</th><th>취소</th></tr>
+  <thead>
+  <tr><th>날짜</th><th>그룹</th><th>사번</th><th>성명</th><th>사유</th><th>작업</th></tr>
+  </thead>
+  <tbody>
   {% for o in overrides %}
-  <tr>
-    <td>{{ o.date }}</td><td>{{ o.group }}</td><td>{{ o.emp_no }}</td>
-    <td>{{ o.name }}</td><td>{{ o.reason }}</td>
+  <tr class="manual-row">
+    <td style="font-weight: 500;">{{ o.date }}</td>
+    <td>{{ o.group }}</td>
+    <td><code>{{ o.emp_no }}</code></td>
+    <td><b>{{ o.name }}</b></td>
+    <td><span class="badge badge-manual">{{ o.reason }}</span></td>
     <td>
       <form class="inline" method="post" action="{{ url_for('manual_delete', override_id=o.id) }}"
             onsubmit="return confirm('수동 배정을 취소할까요?')">
-        <button type="submit">취소</button>
+        <button type="submit" class="danger" style="padding: 4px 10px; font-size: 13px;">취소</button>
       </form>
     </td>
   </tr>
+  {% else %}
+  <tr><td colspan="6" class="small" style="padding: 24px;">등록된 수동 배정이 없습니다.</td></tr>
   {% endfor %}
+  </tbody>
 </table>
+</div>
 {% endblock %}

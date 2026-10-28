@@ -5,37 +5,54 @@
   {% if page > 1 %}
   <a href="{{ url_for('employee_history', page=page-1, q=keyword or none, type=change_type or none, emp_id=emp_id) }}" rel="prev">이전</a>
   {% else %}<button type="button" disabled>이전</button>{% endif %}
-  <span>{{ page }} / {{ pages }} 페이지</span>
+  <span style="font-size: 13px; font-weight: 600; color: var(--text-secondary);">{{ page }} / {{ pages }} 페이지</span>
   {% if page < pages %}
   <a href="{{ url_for('employee_history', page=page+1, q=keyword or none, type=change_type or none, emp_id=emp_id) }}" rel="next">다음</a>
   {% else %}<button type="button" disabled>다음</button>{% endif %}
 </nav>
 {% endmacro %}
+
 <h2>직원 변동 이력</h2>
-<p class="small">전입·전출·제외·활성복구·재전입과 직원 정보 변경을 기록합니다.
-  변동 시각은 변경을 저장한 한국 시간입니다. 변경 전후 내용은 두 줄로 표시하며, 누르면 전체 내용을 볼 수 있습니다.</p>
+<div class="card-box" style="margin-top:0">
+  <p class="small" style="margin:0">
+    전입·전출·제외·활성복구·재전입과 직원 정보 변경을 기록합니다.
+    변동 시각은 변경을 저장한 한국 시간입니다. 변경 전후 내용은 두 줄 요약으로 표시하며 누르면 전체 목록을 펼쳐볼 수 있습니다.
+  </p>
+</div>
+
 <form class="toolbar" method="get" action="{{ url_for('employee_history') }}">
   {% if emp_id is not none %}<input type="hidden" name="emp_id" value="{{ emp_id }}">{% endif %}
-  <label>직원 검색 <input type="text" name="q" value="{{ keyword }}" placeholder="성명·사번·이전 정보"></label>
+  <label>직원 검색 <input type="text" name="q" value="{{ keyword }}" placeholder="성명·사번·이전 정보" size="18"></label>
   <label>변동 종류 <select name="type">
-    <option value="">전체</option>
+    <option value="">전체 종류</option>
     {% for kind in ['전입', '전출', '재전입', '제외', '활성복구', '정보변경', '초기등록', '엑셀변경'] %}
     <option value="{{ kind }}" {{ 'selected' if kind == change_type }}>{{ kind }}</option>
     {% endfor %}
   </select></label>
   <button type="submit">검색</button>
-  <a href="{{ url_for('employee_history') }}">전체 이력</a> · <a href="{{ url_for('employees') }}">직원 관리</a>
+  <div style="margin-left: auto; display: flex; gap: 8px;">
+    <a href="{{ url_for('employee_history') }}" class="btn-secondary" style="display:inline-flex; align-items:center; padding:6px 12px; border-radius:var(--radius-sm); font-size:13px; text-decoration:none;">전체 이력</a>
+    <a href="{{ url_for('employees') }}" class="btn-secondary" style="display:inline-flex; align-items:center; padding:6px 12px; border-radius:var(--radius-sm); font-size:13px; text-decoration:none;">직원 관리</a>
+  </div>
 </form>
-<p>총 {{ total }}건 · {{ first }}–{{ last }}건 표시 · 페이지당 50건 (기록 최신순)</p>
-{{ pagination() }}
-<div style="overflow-x:auto">
+
+<div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 12px;">
+  <p class="small" style="font-weight: 500; margin: 0;">총 {{ total }}건 · {{ first }}–{{ last }}건 표시 · 페이지당 50건 (기록 최신순)</p>
+  {{ pagination() }}
+</div>
+
+<div class="assignment-scroll" style="max-height: 70vh;">
 <table class="employee-history-table">
+  <thead>
   <tr><th>변동 시각</th><th>종류</th><th>성명 / 사번</th><th>변경 전 → 후</th><th>사유</th><th>등록 경로</th></tr>
+  </thead>
+  <tbody>
   {% set time_group = namespace(previous=none) %}
   {% for r in rows %}
   {% set change_time = r.recorded_at | history_time %}
   <tr{% if not loop.first and change_time != time_group.previous %} class="history-time-divider"{% endif %}>
-    <td style="white-space:nowrap">{{ change_time }}</td><td>{{ r.change_type }}</td>
+    <td style="white-space:nowrap; font-weight: 500;">{{ change_time }}</td>
+    <td><span class="badge badge-sukjig">{{ r.change_type }}</span></td>
     <td><a href="{{ url_for('employee_history', emp_id=r.emp_id) }}">{{ r.name }}</a><br>{{ r.emp_no }}</td>
     <td class="history-changes">
       {% if r.changes %}
@@ -45,11 +62,15 @@
       </details>
       {% else %}상태 유지 · {{ r.change_type }} 기록{% endif %}
     </td>
-    <td style="white-space:pre-wrap">{{ r.reason }}</td><td>{{ r.source }}</td>
+    <td style="white-space:pre-wrap">{{ r.reason }}</td>
+    <td><span class="small">{{ r.source }}</span></td>
   </tr>
   {% set time_group.previous = change_time %}
   {% else %}<tr><td colspan="6">조회할 변동 이력이 없습니다.</td></tr>{% endfor %}
+  </tbody>
 </table>
 </div>
-{{ pagination() }}
+<div style="display: flex; justify-content: flex-end; margin-top: 12px;">
+  {{ pagination() }}
+</div>
 {% endblock %}

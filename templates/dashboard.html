@@ -10,14 +10,35 @@
 </div>
 
 <form class="toolbar" method="get" action="{{ url_for('dashboard') }}">
-  <input type="text" name="month" value="{{ year_month }}" placeholder="YYYY-MM" size="7">
+  <label style="font-weight: 500; font-size: 13px;">연월</label>
+  <div class="month-stepper" data-month-stepper title="마우스 휠이나 버튼으로 월을 변경할 수 있습니다">
+    <button type="button" class="stepper-btn btn-step-prev" title="이전 달 (1개월 감소)" aria-label="이전 달">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+    </button>
+    <input type="month" name="month" value="{{ year_month }}" class="stepper-input" placeholder="YYYY-MM" required>
+    <div class="stepper-spinners">
+      <button type="button" class="spinner-btn btn-step-up" title="다음 달 (+1)" aria-label="다음 달">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+      </button>
+      <button type="button" class="spinner-btn btn-step-down" title="이전 달 (-1)" aria-label="이전 달">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </button>
+    </div>
+    <button type="button" class="stepper-btn btn-step-next" title="다음 달 (1개월 증가)" aria-label="다음 달">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+    </button>
+  </div>
   <button type="submit">조회</button>
-  <button type="button" onclick="location='{{ url_for('dashboard', month=year_month) }}'">초기화</button>
-  <button type="submit" formaction="{{ url_for('download_assignments_excel') }}">엑셀 다운로드</button>
+  <button type="button" class="btn-secondary" onclick="location='{{ url_for('dashboard', month=year_month) }}'">초기화</button>
+  <button type="submit" class="btn-excel" formaction="{{ url_for('download_assignments_excel') }}">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+    엑셀 다운로드
+  </button>
 </form>
+
 <form class="toolbar" method="post" action="{{ url_for('regenerate') }}">
   <input type="hidden" name="month" value="{{ year_month }}">
-  <button type="submit" onclick="return confirm('{{ year_month }} 전체를 다시 배정합니다. 계속할까요?')">
+  <button type="submit" class="btn-secondary" onclick="return confirm('{{ year_month }} 전체를 다시 배정합니다. 계속할까요?')">
     이 달 전체 재배정 (수동 배정·변동 반영)
   </button>
   <span class="small">※ 재배정 시 해당 월의 기존 자동 배정 기록은 덮어씁니다(수동 배정은 유지).</span>
@@ -31,17 +52,23 @@
   <tbody>
   {% for r in rows %}
   <tr class="{{ r.day_class }} {{ 'manual-row' if r.kind }}">
-    <td>{{ r.date }}</td>
-    <td>{{ r.dow }}{% if r.holiday_name %} · {{ r.holiday_name }}{% endif %}</td>
-    <td>{{ r.duty_type }}</td>
-    <td>{{ r.name }}</td>
-    <td>{{ r.emp_no }}</td>
+    <td style="font-weight: 500">{{ r.date }}</td>
+    <td>{{ r.dow }}{% if r.holiday_name %} · <b style="color:var(--color-warning-text)">{{ r.holiday_name }}</b>{% endif %}</td>
+    <td><span class="badge badge-{{ 'sukjig' if '숙직' in r.duty_type else 'iljig' }}">{{ r.duty_type }}</span></td>
+    <td><b>{{ r.name }}</b></td>
+    <td><code>{{ r.emp_no }}</code></td>
     <td>{{ r.group }}</td>
-    <td>{{ r.kind }}</td>
+    <td>{% if r.kind %}<span class="badge badge-manual">{{ r.kind }}</span>{% endif %}</td>
   </tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
-<p class="small">색 구분: 핑크 = 주말 · 주황 = 공휴일 · 노랑 = 수동 배정. 공휴일은 요일 옆에 이름을 표시합니다.</p>
+
+<div class="legend-bar">
+  <span class="legend-item"><span class="legend-dot weekend"></span> 주말 (핑크)</span>
+  <span class="legend-item"><span class="legend-dot holiday"></span> 공휴일 (주황)</span>
+  <span class="legend-item"><span class="legend-dot manual-row"></span> 수동 예외 (노랑)</span>
+  <span class="small" style="margin-left: auto;">색 구분: 핑크 = 주말 · 주황 = 공휴일 · 노랑 = 수동 배정. 공휴일은 요일 옆에 이름을 표시합니다.</span>
+</div>
 {% endblock %}

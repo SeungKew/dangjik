@@ -1,11 +1,40 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>당직 배정 생성</h2>
-<p>지정 월(1일~말일) 전체의 당직을 자동 배정합니다.
-  평일 = 숙직 1명, 주말·공휴일 = 일직 2명 + 숙직 1명 (연속근무 스킵형 규칙 적용).</p>
-<form method="post" action="{{ url_for('generate') }}">
-  <label>연월 <input type="month" name="month" placeholder="YYYY-MM" required size="10"></label>
-  <button type="submit">배정 생성</button>
-</form>
-<p class="small">※ 동일 월을 다시 생성하면 기존 자동 배정 기록을 덮어쓰고 다시 배정합니다(수동 배정은 유지).</p>
+
+<div class="card-box" style="max-width: 680px; margin-top: 0;">
+  <p style="margin-top: 0; color: var(--text-secondary);">
+    지정 월(1일~말일) 전체의 당직을 자동 배정합니다.<br>
+    <strong>평일</strong> = 숙직 1명 · <strong>주말 및 공휴일</strong> = 일직 2명 + 숙직 1명 (연속근무 스킵형 규칙 적용).
+  </p>
+
+  <form method="post" action="{{ url_for('generate') }}" style="display: flex; align-items: center; gap: 12px; margin: 24px 0 16px 0;">
+    <label style="font-weight: 600; font-size: 14px;">대상 연월</label>
+    <div class="month-stepper" data-month-stepper title="마우스 휠이나 버튼으로 월을 변경할 수 있습니다">
+      <button type="button" class="stepper-btn btn-step-prev" title="이전 달 (1개월 감소)" aria-label="이전 달">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <input type="month" name="month" placeholder="YYYY-MM" required class="stepper-input">
+      <div class="stepper-spinners">
+        <button type="button" class="spinner-btn btn-step-up" title="다음 달 (+1)" aria-label="다음 달">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+        </button>
+        <button type="button" class="spinner-btn btn-step-down" title="이전 달 (-1)" aria-label="이전 달">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+      </div>
+      <button type="button" class="stepper-btn btn-step-next" title="다음 달 (1개월 증가)" aria-label="다음 달">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+    </div>
+    <button type="submit" style="padding: 9px 20px; font-size: 15px;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+      배정 생성
+    </button>
+  </form>
+
+  <p class="small" style="margin-bottom: 0;">
+    ※ 동일 월을 다시 생성하면 기존 자동 배정 기록을 덮어쓰고 다시 배정합니다 (수동 배정은 유지).
+  </p>
+</div>
 {% endblock %}

@@ -2,73 +2,105 @@
 {% block content %}
 <h2>시스템 관리</h2>
 
-<h3>배정 및 스킵 정책 설정</h3>
-<form method="post" action="{{ url_for('admin_skip_policy') }}">
-  <label>배정 방식
-    <select name="generation_mode">
-      <option value="source_monthly" {{ 'selected' if generation_settings.mode == 'source_monthly' }}>원본 월별 방식 (평일 숙직 우선)</option>
-      <option value="legacy" {{ 'selected' if generation_settings.mode == 'legacy' }}>기존 날짜순 방식</option>
-    </select>
-  </label>
-  <label><input type="checkbox" name="skip_current_month_only" {{ 'checked' if skip_current_month_only }}>
-    당월 정규 근무 중복 방지</label>
-  <label>원본 월별 방식의 이전 근무 간격 제한
-    <input type="number" name="prior_gap_days" value="{{ generation_settings.prior_gap_days }}" min="0" max="365" required>일 (0: 해제)
-  </label>
-  <button type="submit">정책 저장</button>
-</form>
-<p class="small">
-  원본 월별 방식은 평일 숙직을 먼저 확정하고, 휴일 숙직과 충돌하면 휴일 순번을 스킵합니다.<br>
-  체크하면 같은 달에 정규 근무했거나 근무 예정인 직원은 다른 순번에서 스킵합니다.<br>
-  해제하면 당월 근무 간격이 28일 이내인 경우만 스킵합니다.<br>
-  이전 달 근무에 대한 간격 제한은 체크 여부와 관계없이 별도 설정에 따라 적용됩니다. 7~10월 원본 재현값은 30일이며, 원본의 ‘4주’ 문구와 차이가 있어 일수를 바꿀 수 있습니다.<br>
-  복귀는 최초 정규 근무·예정 월의 두 달 뒤, 원래 순번에서 우선 배정합니다. 미소진 대기는 다음 달에도 유지하며 해당 월에 복귀하는 묶음부터 처리합니다.<br>
-  기존 날짜순 방식에서는 체크 시 당월, 해제 시 이전 28일의 근무를 기준으로 판단합니다.<br>
-  벌당직·대근은 정규 근무 간격 계산에서 제외합니다. 기존 생성분은 정책 저장만으로 변경되지 않습니다.
-</p>
+<div class="card-box" style="margin-top: 0;">
+  <h3 style="margin-top: 0;">배정 및 스킵 정책 설정</h3>
+  <form method="post" action="{{ url_for('admin_skip_policy') }}" class="toolbar" style="margin: 16px 0;">
+    <label>배정 방식
+      <select name="generation_mode" style="font-weight: 500;">
+        <option value="source_monthly" {{ 'selected' if generation_settings.mode == 'source_monthly' }}>원본 월별 방식 (평일 숙직 우선)</option>
+        <option value="legacy" {{ 'selected' if generation_settings.mode == 'legacy' }}>기존 날짜순 방식</option>
+      </select>
+    </label>
+    <label><input type="checkbox" name="skip_current_month_only" {{ 'checked' if skip_current_month_only }}>
+      당월 정규 근무 중복 방지</label>
+    <label>이전 근무 간격 제한
+      <input type="number" name="prior_gap_days" value="{{ generation_settings.prior_gap_days }}" min="0" max="365" required style="width: 70px;">일 (0: 해제)
+    </label>
+    <button type="submit" style="margin-left: auto;">정책 저장</button>
+  </form>
+  <p class="small" style="margin-bottom: 0;">
+    · 원본 월별 방식은 평일 숙직을 먼저 확정하고, 휴일 숙직과 충돌하면 휴일 순번을 스킵합니다.<br>
+    · 체크하면 같은 달에 정규 근무했거나 근무 예정인 직원은 다른 순번에서 스킵합니다.<br>
+    · 해제하면 당월 근무 간격이 28일 이내인 경우만 스킵합니다.<br>
+    · 이전 달 근무에 대한 간격 제한은 체크 여부와 관계없이 별도 설정에 따라 적용됩니다. 7~10월 원본 재현값은 30일이며, 원본의 ‘4주’ 문구와 차이가 있어 일수를 바꿀 수 있습니다.<br>
+    · 복귀는 최초 정규 근무·예정 월의 두 달 뒤, 원래 순번에서 우선 배정합니다. 미소진 대기는 다음 달에도 유지하며 해당 월에 복귀하는 묶음부터 처리합니다.<br>
+    · 기존 날짜순 방식에서는 체크 시 당월, 해제 시 이전 28일의 근무를 기준으로 판단합니다.<br>
+    · 벌당직·대근은 정규 근무 간격 계산에서 제외합니다. 기존 생성분은 정책 저장만으로 변경되지 않습니다.
+  </p>
+</div>
 
 <h3>DB 현황</h3>
 <div class="cards">
-  <span>직원 <b>{{ counts.employees }}</b>명 (활성 {{ counts.active }})</span>
+  <span>직원 <b>{{ counts.employees }}</b>명 <small style="font-weight: normal; color: var(--text-muted);">(활성 {{ counts.active }})</small></span>
   <span>당직이력 <b>{{ counts.history }}</b>건</span>
   <span>스킵 큐 <b>{{ counts.skipped }}</b>건</span>
   <span>수동 배정 <b>{{ counts.overrides }}</b>건</span>
 </div>
 
-<h3>월 데이터 삭제 (되돌리기)</h3>
-<p class="small">
-  해당 월의 배정 기록을 지우고 생성 전 상태로 되돌립니다 (순번 포인터·스킵 큐 포함).
-  수동 배정(벌당직/대근)은 삭제되지 않고 유지됩니다.<br>
-  · 본 기능 도입 후 만든 월은 직원·수동 배정·정책 설정이 같으면 스냅샷으로 복원 후 재생성 시 <b>처음과 동일한 결과</b>가 나옵니다.<br>
-  · 도입 전에 이미 생성돼 있던 월(스냅샷 없음)은 이력 기반 추정 롤백이라 재생성 결과가 달라질 수 있고,<br>
-  &nbsp;&nbsp;이전 달을 지우면 이후 달 생성 결과의 기준도 무너지므로 이후 월도 지우고 재생성을 권장합니다.
-</p>
-<table>
-  <tr><th>기록된 월</th><th>이력 건수</th></tr>
-  {% for m, n in months %}
-  <tr><td>{{ m }}</td><td>{{ n }}</td></tr>
-  {% else %}
-  <tr><td colspan="2">기록된 월이 없습니다</td></tr>
-  {% endfor %}
-</table>
-<form method="post" action="{{ url_for('admin_delete_month') }}"
-      onsubmit="return confirm('정말 해당 월의 배정 데이터를 삭제할까요?')">
-  <label>연월 <input type="month" name="month" placeholder="YYYY-MM" required size="10"></label>
-  <label><input type="checkbox" name="backup" checked> 삭제 전 백업 사본 생성 (.db)</label>
-  <label>확인 문구 <input type="text" name="confirm" placeholder="'삭제' 를 입력하세요" required size="16"></label>
-  <button type="submit" class="danger">월 데이터 삭제</button>
-</form>
+<div class="card-box danger-zone">
+  <h3>월 데이터 삭제 (되돌리기)</h3>
+  <p class="small" style="margin-top: 0;">
+    해당 월의 배정 기록을 지우고 생성 전 상태로 되돌립니다 (순번 포인터·스킵 큐 포함).
+    수동 배정(벌당직/대근)은 삭제되지 않고 유지됩니다.<br>
+    · 본 기능 도입 후 만든 월은 직원·수동 배정·정책 설정이 같으면 스냅샷으로 복원 후 재생성 시 <b>처음과 동일한 결과</b>가 나옵니다.<br>
+    · 도입 전에 이미 생성돼 있던 월(스냅샷 없음)은 이력 기반 추정 롤백이라 재생성 결과가 달라질 수 있고 이전 달을 지우면 이후 달 생성 결과의 기준도 무너지므로 이후 월도 지우고 재생성을 권장합니다.
+  </p>
 
-<h3>전체 DB 초기화 (위험)</h3>
-<p class="small">
-  <b>duty_system_v3.db</b>의 모든 데이터(직원 마스터·당직이력·스킵 큐·수동 배정·순번 포인터)를
-  삭제하고 빈 DB로 초기화합니다. 실행 후 <b>"입력양식 등록"</b>부터 직원 데이터를 다시 적재해야 합니다.
-  초기화 전 백업을 생성하면 안전합니다. 원본 v2 DB(duty_system_v2.db)는 영향받지 않습니다.
-</p>
-<form method="post" action="{{ url_for('admin_reset_db') }}"
-      onsubmit="return confirm('정말 전체 DB를 삭제하고 초기화할까요? 되돌릴 수 없습니다.')">
-  <label><input type="checkbox" name="backup" checked> 초기화 전 백업 사본 생성 (.db)</label>
-  <label>확인 문구 <input type="text" name="confirm" placeholder="'초기화' 를 입력하세요" required size="16"></label>
-  <button type="submit" class="danger">전체 DB 초기화</button>
-</form>
+  <div style="max-width: 400px; margin: 16px 0;">
+    <table>
+      <thead>
+      <tr><th>기록된 월</th><th>이력 건수</th></tr>
+      </thead>
+      <tbody>
+      {% for m, n in months %}
+      <tr><td style="font-weight: 500;">{{ m }}</td><td>{{ n }}건</td></tr>
+      {% else %}
+      <tr><td colspan="2" class="small">기록된 월이 없습니다</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <form method="post" action="{{ url_for('admin_delete_month') }}" class="toolbar"
+        onsubmit="return confirm('정말 해당 월의 배정 데이터를 삭제할까요?')">
+    <label>연월
+      <div class="month-stepper" data-month-stepper title="마우스 휠이나 버튼으로 월을 변경할 수 있습니다">
+        <button type="button" class="stepper-btn btn-step-prev" title="이전 달 (1개월 감소)" aria-label="이전 달">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <input type="month" name="month" placeholder="YYYY-MM" required class="stepper-input">
+        <div class="stepper-spinners">
+          <button type="button" class="spinner-btn btn-step-up" title="다음 달 (+1)" aria-label="다음 달">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+          </button>
+          <button type="button" class="spinner-btn btn-step-down" title="이전 달 (-1)" aria-label="이전 달">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+        </div>
+        <button type="button" class="stepper-btn btn-step-next" title="다음 달 (1개월 증가)" aria-label="다음 달">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        </button>
+      </div>
+    </label>
+    <label><input type="checkbox" name="backup" checked> 삭제 전 백업 사본 생성 (.db)</label>
+    <label>확인 문구 <input type="text" name="confirm" placeholder="'삭제' 를 입력하세요" required size="16"></label>
+    <button type="submit" class="danger">월 데이터 삭제</button>
+  </form>
+</div>
+
+<div class="card-box danger-zone">
+  <h3>전체 DB 초기화 (위험)</h3>
+  <p class="small" style="margin-top: 0;">
+    <b>duty_system_v3.db</b>의 모든 데이터(직원 마스터·당직이력·스킵 큐·수동 배정·순번 포인터)를
+    삭제하고 빈 DB로 초기화합니다. 실행 후 <b>"입력양식 등록"</b>부터 직원 데이터를 다시 적재해야 합니다.
+    초기화 전 백업을 생성하면 안전합니다. 원본 v2 DB(duty_system_v2.db)는 영향받지 않습니다.
+  </p>
+
+  <form method="post" action="{{ url_for('admin_reset_db') }}" class="toolbar"
+        onsubmit="return confirm('정말 전체 DB를 삭제하고 초기화할까요? 되돌릴 수 없습니다.')">
+    <label><input type="checkbox" name="backup" checked> 초기화 전 백업 사본 생성 (.db)</label>
+    <label>확인 문구 <input type="text" name="confirm" placeholder="'초기화' 를 입력하세요" required size="16"></label>
+    <button type="submit" class="danger">전체 DB 초기화</button>
+  </form>
+</div>
 {% endblock %}
