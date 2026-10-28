@@ -1,8 +1,19 @@
 {% extends 'base.html' %}
 {% block content %}
+{% macro pagination() %}
+<nav class="history-pagination" aria-label="직원 변동 이력 페이지">
+  {% if page > 1 %}
+  <a href="{{ url_for('employee_history', page=page-1, q=keyword or none, type=change_type or none, emp_id=emp_id) }}" rel="prev">이전</a>
+  {% else %}<button type="button" disabled>이전</button>{% endif %}
+  <span>{{ page }} / {{ pages }} 페이지</span>
+  {% if page < pages %}
+  <a href="{{ url_for('employee_history', page=page+1, q=keyword or none, type=change_type or none, emp_id=emp_id) }}" rel="next">다음</a>
+  {% else %}<button type="button" disabled>다음</button>{% endif %}
+</nav>
+{% endmacro %}
 <h2>직원 변동 이력</h2>
 <p class="small">전입·전출·제외·활성복구·재전입과 직원 정보 변경을 기록합니다.
-  변동일은 입력한 날짜이며 기록 시각은 한국 시간입니다. 이 기능 도입 후 저장한 변경부터 조회할 수 있습니다.</p>
+  변동 시각은 변경을 저장한 한국 시간입니다. 변경 전후 내용은 두 줄로 표시하며, 누르면 전체 내용을 볼 수 있습니다.</p>
 <form class="toolbar" method="get" action="{{ url_for('employee_history') }}">
   {% if emp_id is not none %}<input type="hidden" name="emp_id" value="{{ emp_id }}">{% endif %}
   <label>직원 검색 <input type="text" name="q" value="{{ keyword }}" placeholder="성명·사번·이전 정보"></label>
@@ -15,18 +26,30 @@
   <button type="submit">검색</button>
   <a href="{{ url_for('employee_history') }}">전체 이력</a> · <a href="{{ url_for('employees') }}">직원 관리</a>
 </form>
-<p>총 {{ total }}건 · 전체 표시 (기록 최신순)</p>
+<p>총 {{ total }}건 · {{ first }}–{{ last }}건 표시 · 페이지당 50건 (기록 최신순)</p>
+{{ pagination() }}
 <div style="overflow-x:auto">
-<table>
-  <tr><th>변동일</th><th>기록 시각</th><th>종류</th><th>성명 / 사번</th><th>변경 전 → 후</th><th>사유</th><th>등록 경로</th></tr>
+<table class="employee-history-table">
+  <tr><th>변동 시각</th><th>종류</th><th>성명 / 사번</th><th>변경 전 → 후</th><th>사유</th><th>등록 경로</th></tr>
+  {% set time_group = namespace(previous=none) %}
   {% for r in rows %}
-  <tr>
-    <td>{{ r.effective_date }}</td><td>{{ r.recorded_at }}</td><td>{{ r.change_type }}</td>
+  {% set change_time = r.recorded_at | history_time %}
+  <tr{% if not loop.first and change_time != time_group.previous %} class="history-time-divider"{% endif %}>
+    <td style="white-space:nowrap">{{ change_time }}</td><td>{{ r.change_type }}</td>
     <td><a href="{{ url_for('employee_history', emp_id=r.emp_id) }}">{{ r.name }}</a><br>{{ r.emp_no }}</td>
-    <td style="text-align:left">{% for change in r.changes %}{{ change }}<br>{% else %}상태 유지 · {{ r.change_type }} 기록{% endfor %}</td>
+    <td class="history-changes">
+      {% if r.changes %}
+      <details>
+        <summary><span class="history-change-preview">{{ r.changes | join(' · ') }}</span></summary>
+        <ul>{% for change in r.changes %}<li>{{ change }}</li>{% endfor %}</ul>
+      </details>
+      {% else %}상태 유지 · {{ r.change_type }} 기록{% endif %}
+    </td>
     <td style="white-space:pre-wrap">{{ r.reason }}</td><td>{{ r.source }}</td>
   </tr>
-  {% else %}<tr><td colspan="7">조회할 변동 이력이 없습니다.</td></tr>{% endfor %}
+  {% set time_group.previous = change_time %}
+  {% else %}<tr><td colspan="6">조회할 변동 이력이 없습니다.</td></tr>{% endfor %}
 </table>
 </div>
+{{ pagination() }}
 {% endblock %}

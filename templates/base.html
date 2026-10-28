@@ -20,6 +20,16 @@
   table { border-collapse: collapse; width: 100%; background: #fff; font-size: 14px; }
   th, td { border: 1px solid #d7dbe0; padding: 6px 8px; text-align: center; }
   th { background: #eef1f5; }
+  .assignment-scroll { max-height: 65vh; overflow: auto; scrollbar-gutter: stable;
+                       padding-bottom: 8px; border: 1px solid #d7dbe0; background: #fff; }
+  .assignment-scroll table { min-width: 760px; }
+  .assignment-scroll thead th { position: sticky; top: 0; z-index: 1; }
+  .assignment-scroll:focus-visible { outline: 2px solid #1a3a63; outline-offset: 2px; }
+  @media print {
+    .assignment-scroll { max-height: none; overflow: visible; border: 0; }
+    .assignment-scroll table { min-width: 0; }
+    .assignment-scroll thead th { position: static; }
+  }
   .weekend { background: #fdf3f3; }
   .holiday { background: #fff4e5; }
   .manual-row { background: #fff8e1; }
@@ -32,6 +42,20 @@
                 padding: 10px 16px; margin-right: 10px; }
   .cards b { font-size: 18px; }
   .small { color: #666; font-size: 12px; }
+  .history-changes { text-align: left; width: 40%; min-width: 220px; }
+  .employee-history-table tr.history-time-divider > td { border-top: 3px solid #65758b; }
+  .history-pagination { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+  .history-pagination a { color: #1a3a63; text-decoration: none; margin: 0;
+                          padding: 5px 12px; border: 1px solid #d7dbe0; border-radius: 3px; }
+  .history-changes summary { cursor: pointer; display: flex; align-items: flex-start;
+                             gap: 4px; list-style: none; }
+  .history-changes summary::-webkit-details-marker { display: none; }
+  .history-changes summary::before { content: '▸'; flex-shrink: 0; }
+  .history-changes details[open] summary::before { content: '▾'; }
+  .history-change-preview { display: -webkit-box; -webkit-box-orient: vertical;
+                            -webkit-line-clamp: 2; overflow: hidden; line-height: 1.5;
+                            max-height: 3em; overflow-wrap: anywhere; min-width: 0; }
+  .history-changes ul { margin: 6px 0 0; padding-left: 20px; overflow-wrap: anywhere; }
   input[type=text], input[type=date], input[type=number], select { width: auto; }
 </style>
 </head>

@@ -1,12 +1,12 @@
 """본사 당직명령 자동 배정 시스템 (연속근무 스킵형 제도).
 
-배정 규칙 (2026년 2~3월 실제 배정 데이터 기준으로 검증됨):
+배정 규칙 (기존 날짜순 방식 및 2026년 7~10월 원본 월별 방식):
 - 평일(근무일): 숙직 1명 — 숙직_3직급_남 그룹, group_idx 오름차순(순방향, ptr_sukjig_fwd)
 - 주말·공휴일: 일직 2명(일직_2/3직급_여 + 일직_4직급 각 1명, group_idx 오름차순)
   + 숙직 1명 — group_idx 내림차순(역방향, ptr_sukjig_rev)
-- 연속근무 스킵형: 기본은 해당 월에 이미 정규 근무한 직원을 제외하고 차순위 배정.
-  시스템 관리에서 당월 정책을 해제하면 이전 28일 기준으로 판단한다.
-  제외된 순번은 익익월에 최우선 배정(skip_queue 기반 복귀).
+- 원본 월별 방식: 평일 숙직을 먼저 확정한 뒤 휴일 숙직의 당월 중복과 이전 근무 간격을 판정.
+  원본 재현 간격은 30일(관리자 설정 가능). 복귀는 최초 근무·예정 월의 두 달 뒤, 원래 트랙 우선.
+- 기존 날짜순 방식: 당월 정책 ON이면 당월, OFF이면 이전 28일 근무를 기준으로 스킵한다.
 - 수동 배정(벌당직/대근): manual_overrides 테이블이 최우선.
   벌당직·대근 이력은 이후 정규 배정의 스킵 기준에서 제외(제도 안내 PDF 예외 조항).
 """
@@ -17,6 +17,8 @@ import shutil
 import sqlite3
 import calendar
 import json
+from io import BytesIO
+from itertools import groupby
 import holidays
 
 import openpyxl
@@ -62,10 +64,15 @@ def init_db() -> None:
     c.execute('''CREATE TABLE IF NOT EXISTS skip_queue (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     emp_id INTEGER, skipped_date DATE, return_year_month TEXT,
-                    is_returned INTEGER DEFAULT 0
+                    is_returned INTEGER DEFAULT 0, pointer_key TEXT
                  )''')
+    _ensure_skip_queue_tracks(c)
     c.execute('''CREATE TABLE IF NOT EXISTS system_state (
                     pointer_key TEXT PRIMARY KEY, emp_id INTEGER
+                 )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS source_roster_tracks (
+                    emp_id INTEGER, pointer_key TEXT, track_idx INTEGER, is_active INTEGER,
+                    PRIMARY KEY(emp_id, pointer_key)
                  )''')
     # 수동 배정(벌당직/대근 등) 예외 테이블
     c.execute('''CREATE TABLE IF NOT EXISTS manual_overrides (
@@ -136,6 +143,7 @@ def load_initial_data(file_path: str) -> None:
     col = {h: i for i, h in enumerate(header)}
     conn = get_conn()
     c = conn.cursor()
+    c.execute('DELETE FROM source_roster_tracks')
     before_employees = {r['id']: r for r in _employee_snapshots(c)}
     added, updated = 0, 0
     removed = 0
@@ -224,6 +232,260 @@ def load_initial_data(file_path: str) -> None:
     print(f"[불러오기] 직원 신규 {added}명 / 갱신 {updated}명 / 주석행 제거 {removed}명, 이력 신규 {h_added}건")
 
 
+def import_uploaded_workbook(file_path: str, roster_only: bool = False) -> dict:
+    """원본 당직명령과 기존 입력양식을 시트명으로 구분한다."""
+    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        sheets = set(wb.sheetnames)
+    finally:
+        wb.close()
+    if {'당직명령', '순서'} <= sheets:
+        return {'format': 'original_roster' if roster_only else 'original',
+                **load_original_order(file_path, roster_only=roster_only)}
+    if {'직원명부(마스터)', '초기당직이력(2월)'} <= sheets:
+        if roster_only:
+            raise ValueError('명부만 갱신은 원본 당직명령 파일에서 사용할 수 있습니다.')
+        load_initial_data(file_path)
+        return {'format': 'template', 'warnings': []}
+    raise ValueError('원본 당직명령(당직명령·순서) 또는 기존 입력양식 시트를 확인하세요.')
+
+
+def _source_emp_no(value: object) -> str:
+    text = str(int(value)) if isinstance(value, (int, float)) else str(value or '').strip()
+    if not text.isascii() or not text.isdigit() or not 1 <= len(text) <= 8 or int(text) == 0:
+        raise ValueError(f'올바르지 않은 사번: {value}')
+    return text.zfill(8)
+
+
+def _source_excluded(cell: openpyxl.cell.cell.Cell) -> bool:
+    color = cell.fill.fgColor
+    return cell.fill.patternType == 'solid' and (
+        (color.type == 'rgb' and str(color.rgb)[-6:].upper() == 'FF99CC')
+        or (color.type == 'theme' and color.theme == 5
+            and abs(color.tint - 0.7999816888943144) < 0.0001))
+
+
+def read_original_order(file_path: str) -> dict:
+    """원본 명부/명령/스킵을 전부 검증한다. DB에는 쓰지 않는다."""
+    import re
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    try:
+        if not {'순서', '당직명령'} <= set(wb.sheetnames):
+            raise ValueError("원본 파일에 '순서', '당직명령' 시트가 필요합니다.")
+        order, roster = wb['당직명령'], wb['순서']
+        match = re.search(r'(20\d{2})\s*년\s*(\d{1,2})\s*월', ' '.join(str(cell.value or '') for cell in order[1]))
+        if not match:
+            raise ValueError('당직명령 제목에서 기준 연월을 읽을 수 없습니다.')
+        year, month = map(int, match.groups())
+        first = datetime.date(year, month, 1)
+        ym = first.strftime('%Y-%m')
+        employees: dict[str, dict] = {}
+        tracks: list[dict] = []
+        warnings: list[str] = []
+        for col, group, pointer in ((1, GROUP_SEN, PTR_SEN), (4, GROUP_JUN, PTR_JUN),
+                                     (7, GROUP_SUK, PTR_FWD), (10, GROUP_SUK, PTR_REV)):
+            seen: set[str] = set()
+            for row in range(3, roster.max_row + 1):
+                cell, raw_no = roster.cell(row, col), roster.cell(row, col + 1).value
+                if cell.value is None or str(cell.value).startswith('*') or raw_no is None:
+                    continue
+                number = _source_emp_no(raw_no)
+                name = str(cell.value).strip()
+                if number in seen:
+                    raise ValueError(f'순서 {cell.coordinate}: 중복 사번 {number}')
+                seen.add(number)
+                employee = dict(emp_no=number, name=name, dept=str(roster.cell(row, col + 2).value or '').strip(),
+                                duty_group=group, group_idx=len(seen), is_active=int(not _source_excluded(cell)))
+                if not employee['dept']:
+                    raise ValueError(f'순서 {cell.coordinate}: 부서가 없습니다.')
+                if pointer != PTR_REV:
+                    if number in employees:
+                        raise ValueError(f'순서 {cell.coordinate}: 다른 직원과 사번 충돌 {number}')
+                    employees[number] = employee
+                else:
+                    primary = employees.get(number)
+                    if primary is None or primary['name'] != name or primary['duty_group'] != group:
+                        raise ValueError(f'순서 {cell.coordinate}: 평일/휴일 숙직 직원 식별 불일치 {number}')
+                    if primary['is_active'] != employee['is_active']:
+                        warnings.append(f'{name}({number}): 평일·휴일 제외 표시가 달라 각각 반영했습니다.')
+                # 역순 명부는 위에서 아래가 이미 배정 순서이다.
+                tracks.append(dict(emp_no=number, pointer_key=pointer, track_idx=len(seen),
+                                   is_active=employee['is_active']))
+            if not seen:
+                raise ValueError(f'순서 시트의 {group} 명부가 비어 있습니다.')
+        if {x['emp_no'] for x in tracks if x['pointer_key'] == PTR_REV} != {
+                n for n, e in employees.items() if e['duty_group'] == GROUP_SUK}:
+            raise ValueError('평일/휴일 숙직 명부의 직원 집합이 다릅니다.')
+
+        kr = holidays.KR(years=[year])
+        duties: list[dict] = []
+        date: datetime.date | None = None
+        kind = ''
+        slots: set[tuple[str, str]] = set()
+        for row in range(4, order.max_row + 1):
+            raw_day = order.cell(row, 2).value
+            if isinstance(raw_day, (int, float)):
+                date = datetime.date(year, month, int(raw_day))
+            if order.cell(row, 4).value in ('일직', '숙직'):
+                kind = order.cell(row, 4).value
+            name_value, raw_no = order.cell(row, 6).value, order.cell(row, 7).value
+            if name_value is None and raw_no is None:
+                continue
+            if date is None or kind not in ('일직', '숙직') or name_value is None or raw_no is None:
+                raise ValueError(f'당직명령 {row}행: 날짜·분류·성명·사번을 확인하세요.')
+            number, name = _source_emp_no(raw_no), str(name_value).strip()
+            employee = employees.get(number)
+            eligible = lambda e: e['duty_group'] == GROUP_SUK if kind == '숙직' else e['duty_group'] in (GROUP_SEN, GROUP_JUN)
+            if employee is None or employee['name'] != name or not eligible(employee):
+                candidates = [e for e in employees.values() if e['name'] == name and eligible(e)]
+                if len(candidates) != 1:
+                    raise ValueError(f'당직명령 {row}행: {name}/{number}를 명부에서 확정할 수 없습니다.')
+                corrected = candidates[0]
+                warnings.append(f'{date} {kind} {name}: 원본 사번 {number} → 같은 이름의 해당 당직그룹 사번 {corrected["emp_no"]}로 반영했습니다.')
+                number, employee = corrected['emp_no'], corrected
+            holiday = date.weekday() >= 5 or date in kr
+            pointer = PTR_REV if holiday else PTR_FWD
+            if kind == '일직':
+                pointer = PTR_SEN if employee['duty_group'] == GROUP_SEN else PTR_JUN
+            slot = (date.isoformat(), pointer)
+            if slot in slots:
+                raise ValueError(f'{date}: 같은 당직 자리의 중복 배정입니다.')
+            slots.add(slot)
+            duties.append(dict(date=date.isoformat(), kind=kind, emp_no=number, pointer_key=pointer,
+                               penalty=bool(order.cell(row, 6).font.bold)))
+        for day in range(1, calendar.monthrange(year, month)[1] + 1):
+            date = datetime.date(year, month, day)
+            pointers = (PTR_REV, PTR_SEN, PTR_JUN) if date.weekday() >= 5 or date in kr else (PTR_FWD,)
+            if {p for d, p in slots if d == date.isoformat()} != set(pointers):
+                raise ValueError(f'{date}: 원본 당직명령이 비어 있거나 당직 자리 수가 맞지 않습니다.')
+
+        def parse_month(value: object) -> str:
+            if isinstance(value, (datetime.date, datetime.datetime)):
+                return value.strftime('%Y-%m')
+            value = str(value or '').strip().replace('.', '-').replace('/', '-')
+            parsed = datetime.datetime.strptime(value, '%Y-%m')
+            return parsed.strftime('%Y-%m')
+
+        skips: list[dict] = []
+        for row in range(3, roster.max_row + 1):
+            raw_no = roster.cell(row, 14).value
+            if raw_no is None:
+                continue
+            number = _source_emp_no(raw_no)
+            if number not in employees or employees[number]['name'] != str(roster.cell(row, 13).value).strip():
+                raise ValueError(f'순서 스킵 {row}행: 직원 성명·사번 불일치')
+            skipped, returning = parse_month(roster.cell(row, 16).value), parse_month(roster.cell(row, 17).value)
+            if skipped > ym or returning <= skipped:
+                raise ValueError(f'순서 스킵 {row}행: 스킵월과 복귀월을 확인하세요.')
+            direction = str(roster.cell(row, 19).value or '')
+            group = employees[number]['duty_group']
+            pointer = {GROUP_SEN: PTR_SEN, GROUP_JUN: PTR_JUN}.get(group)
+            if pointer is None:
+                if '주말' in direction or '휴일' in direction:
+                    pointer = PTR_REV
+                elif '주중' in direction or '평일' in direction:
+                    pointer = PTR_FWD
+                elif returning <= ym:
+                    pointer = PTR_FWD  # 이미 복귀 완료한 구월 표는 다음 순번에 영향 없음
+                else:
+                    raise ValueError(f'순서 스킵 {row}행: 복귀 대기자의 주중/주말 순번 구분이 필요합니다.')
+            reason_text = str(roster.cell(row, 18).value or '')
+            skip_reason = 'same_month' if '연속근무' in reason_text else 'recent_gap' if '4주' in reason_text else 'imported'
+            skips.append(dict(emp_no=number, skipped_date=skipped + '-01', return_year_month=returning, skip_reason=skip_reason,
+                              pointer_key=pointer, is_returned=int(returning < ym or (returning == ym and any(
+                                  duty['emp_no'] == number and duty['pointer_key'] == pointer for duty in duties)))))
+        skip_table_present = str(roster.cell(2, 14).value or '').strip() == '사번'
+        if not skip_table_present:
+            warnings.append('원본에 스킵 내역 표가 없습니다. 명부만 갱신하여 기존 복귀 대기를 유지하세요.')
+        return dict(month=ym, employees=list(employees.values()), tracks=tracks,
+                    duties=duties, skips=skips, warnings=warnings, skip_table_present=skip_table_present)
+    finally:
+        wb.close()
+
+
+def _sync_original_roster(c: sqlite3.Cursor, data: dict, file_path: str) -> tuple[dict, int]:
+    """사번을 유지하며 원본 직원·트랙만 동기화한다. 근무 이력은 읽거나 쓰지 않는다."""
+    before = {e['emp_no']: e for e in _employee_snapshots(c)}
+    incoming = {e['emp_no'] for e in data['employees']}
+    # DB에만 있는 직원은 이력을 유지하되 정규 배정에서 제외한다.
+    c.execute('UPDATE employees SET is_active=0')
+    max_idx: dict[str, int] = {}
+    for employee in data['employees']:
+        c.execute('''INSERT INTO employees(emp_no,name,dept,duty_group,group_idx,is_active)
+            VALUES (:emp_no,:name,:dept,:duty_group,:group_idx,:is_active)
+            ON CONFLICT(emp_no) DO UPDATE SET name=excluded.name,dept=excluded.dept,
+            duty_group=excluded.duty_group,group_idx=excluded.group_idx,is_active=excluded.is_active''', employee)
+        max_idx[employee['duty_group']] = max(max_idx.get(employee['duty_group'], 0), employee['group_idx'])
+    # 소스 밖 직원의 순번 충돌을 피하고 기존 직원 간 순서는 보존한다.
+    for old in sorted(before.values(), key=lambda e: (e['group_idx'], e['id'])):
+        if old['emp_no'] not in incoming:
+            group = old['duty_group']
+            max_idx[group] = max_idx.get(group, 0) + 1
+            c.execute('UPDATE employees SET group_idx=? WHERE id=?', (max_idx[group], old['id']))
+    master = {e['emp_no']: e for e in _employee_snapshots(c)}
+    changes = 0
+    for number, after in master.items():
+        old = before.get(number)
+        if old != after:
+            logged = _record_employee_change(c, old, after, '초기등록' if old is None else '엑셀변경',
+                                    f'원본 {data["month"]} 기준 구성: {os.path.basename(file_path)}',
+                                    employee_change_date(), '원본 엑셀 업로드')
+            changes += int(logged)
+    c.execute('DELETE FROM source_roster_tracks')
+    for track in data['tracks']:
+        c.execute('INSERT INTO source_roster_tracks(emp_id,pointer_key,track_idx,is_active) VALUES (?,?,?,?)',
+                     (master[track['emp_no']]['id'], track['pointer_key'], track['track_idx'], track['is_active']))
+    return master, changes
+
+
+def load_original_order(file_path: str, roster_only: bool = False) -> dict:
+    """원본 월말 기준 상태 구성. 검증 후 백업·단일 트랜잭션으로 반영한다."""
+    data = read_original_order(file_path)
+    if not roster_only and not data['skip_table_present']:
+        raise ValueError('스킵 내역 표가 없어 이전 월 복귀 대기를 복원할 수 없습니다. 이전 월을 기준으로 구성한 뒤 이 파일은 직원 명부만 갱신으로 등록하세요.')
+    init_db()
+    conn = get_conn()
+    try:
+        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        backup = os.path.join(os.path.dirname(os.path.abspath(DB_NAME)), f'duty_system_v3_before_source_{stamp}.db')
+        with sqlite3.connect(backup) as target:
+            conn.backup(target)
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            c = conn.cursor()
+            master, changes = _sync_original_roster(c, data, file_path)
+            removed = 0
+            if not roster_only:
+                start = data['month'] + '-01'
+                removed = conn.execute('DELETE FROM duty_history WHERE duty_date>=?', (start,)).rowcount
+                conn.execute('DELETE FROM system_state_snapshot WHERE year_month>=?', (data['month'],))
+                conn.execute('DELETE FROM skip_queue')
+                for skip in data['skips']:
+                    conn.execute('INSERT INTO skip_queue(emp_id,skipped_date,return_year_month,pointer_key,is_returned,skip_reason) VALUES (?,?,?,?,?,?)',
+                                 (master[skip['emp_no']]['id'], skip['skipped_date'], skip['return_year_month'], skip['pointer_key'], skip['is_returned'], skip['skip_reason']))
+                consumed_returns = {(s['emp_no'], s['pointer_key']) for s in data['skips']
+                                    if s['return_year_month'] == data['month']}
+                conn.execute('DELETE FROM system_state')
+                for duty in sorted(data['duties'], key=lambda d: d['date']):
+                    emp = master[duty['emp_no']]
+                    conn.execute('INSERT INTO duty_history(duty_date,duty_type,emp_id) VALUES (?,?,?)',
+                                 (duty['date'], duty['kind'], emp['id']))
+                    if duty['penalty']:
+                        reason = '원본 굵은 표시: 벌당직/대근'
+                        exists = conn.execute('SELECT 1 FROM manual_overrides WHERE target_date=? AND duty_group=? AND emp_no=?',
+                                              (duty['date'], emp['duty_group'], duty['emp_no'])).fetchone()
+                        if not exists:
+                            conn.execute('INSERT INTO manual_overrides(target_date,duty_group,emp_no,reason) VALUES (?,?,?,?)',
+                                         (duty['date'], emp['duty_group'], duty['emp_no'], reason))
+                    elif (duty['emp_no'], duty['pointer_key']) not in consumed_returns:
+                        conn.execute('REPLACE INTO system_state(pointer_key,emp_id) VALUES (?,?)', (duty['pointer_key'], emp['id']))
+        return dict(month=data['month'], employees=len(data['employees']), duties=0 if roster_only else len(data['duties']),
+                    skips=0 if roster_only else len(data['skips']), changes=changes, removed_history=removed,
+                    backup=backup, warnings=data['warnings'])
+    finally:
+        conn.close()
+
+
 def add_manual_override() -> None:
     """관리자가 특정 날짜에 특정 인원을 수동으로 강제 배정 (벌당직 등)"""
     date_str: str = input("수동 지정할 날짜 (YYYY-MM-DD): ")
@@ -238,6 +500,36 @@ def add_manual_override() -> None:
     conn.commit()
     conn.close()
     print(f"[{date_str}] {group}에 수동 배정되었습니다.")
+
+
+def _infer_skip_queue_track(duty_group: str, skipped_date: str) -> str | None:
+    """구 큐의 스킵일과 그룹으로 원래 순번 트랙을 복원한다."""
+    if duty_group == GROUP_SEN:
+        return PTR_SEN
+    if duty_group == GROUP_JUN:
+        return PTR_JUN
+    if duty_group == GROUP_SUK:
+        day = datetime.date.fromisoformat(skipped_date)
+        return PTR_REV if day.weekday() >= 5 or day in holidays.KR(years=[day.year]) else PTR_FWD
+    return None
+
+
+def _ensure_skip_queue_tracks(c: sqlite3.Cursor) -> None:
+    columns = {row[1] for row in c.execute('PRAGMA table_info(skip_queue)')}
+    if 'pointer_key' not in columns:
+        c.execute('ALTER TABLE skip_queue ADD COLUMN pointer_key TEXT')
+    for column in ('skip_reason', 'source_duty_date', 'returned_date'):
+        if column not in columns:
+            c.execute(f'ALTER TABLE skip_queue ADD COLUMN {column} TEXT')
+    rows = c.execute('''SELECT q.id, q.skipped_date, e.duty_group FROM skip_queue q
+                        JOIN employees e ON e.id=q.emp_id
+                        WHERE q.pointer_key IS NULL OR q.pointer_key='' ''').fetchall()
+    for queue_id, date, group in rows:
+        track = _infer_skip_queue_track(group, date)
+        if track is not None:
+            c.execute('UPDATE skip_queue SET pointer_key=? WHERE id=?', (track, queue_id))
+    c.execute('''CREATE INDEX IF NOT EXISTS idx_skip_queue_track_return
+                 ON skip_queue(pointer_key, return_year_month, is_returned, skipped_date, id)''')
 
 
 def _ensure_system_settings(c: sqlite3.Cursor) -> None:
@@ -313,14 +605,23 @@ def get_next_candidate(c: sqlite3.Cursor, current_date_str: str, group_name: str
     current_date = datetime.datetime.strptime(current_date_str, "%Y-%m-%d").date()
     current_ym = current_date.strftime("%Y-%m")
 
-    # 2. 익익월 복귀자 확인
-    c.execute('''SELECT q.id, q.emp_id, e.name FROM skip_queue q
+    # 2. 원래 순번 트랙의 익익월 복귀자만 확인한다.
+    c.execute('''SELECT q.id, q.emp_id, e.name, q.pointer_key, q.skipped_date FROM skip_queue q
                  JOIN employees e ON q.emp_id = e.id
-                 WHERE e.duty_group = ? AND q.return_year_month = ? AND q.is_returned = 0 AND e.is_active = 1
-                 ORDER BY q.skipped_date ASC, q.id ASC''', (group_name, current_ym))
+                 LEFT JOIN source_roster_tracks t ON t.emp_id=e.id AND t.pointer_key=?
+                 WHERE e.duty_group = ? AND q.return_year_month = ? AND q.is_returned = 0 AND COALESCE(t.is_active,e.is_active) = 1
+                   AND (q.pointer_key = ? OR q.pointer_key IS NULL OR q.pointer_key = '')
+                 ORDER BY q.skipped_date ASC, q.id ASC''', (pointer_key, group_name, current_ym, pointer_key))
     for skip_return in c.fetchall():
+        track = skip_return[3]
+        if not track:
+            track = _infer_skip_queue_track(group_name, skip_return[4])
+            if track is not None:
+                c.execute('UPDATE skip_queue SET pointer_key=? WHERE id=?', (track, skip_return[0]))
+        if track != pointer_key:
+            continue
         if not _has_recent_regular_duty(c, skip_return[1], current_date_str):
-            c.execute("UPDATE skip_queue SET is_returned = 1 WHERE id = ?", (skip_return[0],))
+            c.execute("UPDATE skip_queue SET is_returned = 1, returned_date=? WHERE id = ?", (current_date_str, skip_return[0]))
             return skip_return[1], skip_return[2] + "(복귀)"
 
     # 3. 저장된 스킵 정책에 따라 정규 순번 탐색
@@ -330,8 +631,14 @@ def get_next_candidate(c: sqlite3.Cursor, current_date_str: str, group_name: str
 
     order_dir = "DESC" if reverse else "ASC"
     # 전출된 마지막 배정자의 위치도 찾아야 순번이 처음으로 되돌아가지 않는다.
-    c.execute(f"SELECT id, name, is_active FROM employees WHERE duty_group = ? ORDER BY group_idx {order_dir}, id {order_dir}",
-              (group_name,))
+    c.execute(f"""SELECT e.id,e.name,COALESCE(t.is_active,e.is_active) FROM employees e
+                  LEFT JOIN source_roster_tracks t ON t.emp_id=e.id AND t.pointer_key=?
+                  WHERE e.duty_group=?
+                  ORDER BY COALESCE(t.track_idx,
+                      CASE WHEN ? THEN (SELECT count(*) FROM employees other
+                           WHERE other.duty_group=e.duty_group AND other.group_idx>=e.group_idx)
+                           ELSE e.group_idx END) ASC,
+                           e.group_idx {order_dir}, e.id {order_dir}""", (pointer_key, group_name, reverse))
     emps = c.fetchall()
     if not any(emp[2] for emp in emps):
         return None, "배정불가"
@@ -355,8 +662,8 @@ def get_next_candidate(c: sqlite3.Cursor, current_date_str: str, group_name: str
             return emp_id, name
 
         return_ym = (current_date.replace(day=1) + datetime.timedelta(days=SKIP_RETURN_OFFSET_DAYS)).strftime("%Y-%m")
-        c.execute("INSERT INTO skip_queue (emp_id, skipped_date, return_year_month) VALUES (?, ?, ?)",
-                  (emp_id, current_date_str, return_ym))
+        c.execute("INSERT INTO skip_queue (emp_id, skipped_date, return_year_month, pointer_key) VALUES (?, ?, ?, ?)",
+                  (emp_id, current_date_str, return_ym, pointer_key))
 
         curr_idx = (curr_idx + 1) % len(emps)
         if curr_idx == start_idx:
@@ -395,6 +702,173 @@ def _emp_no_of(c: sqlite3.Cursor, emp_id: int) -> str | None:
     return row[0] if row else None
 
 
+def _add_months(year_month: str, offset: int) -> str:
+    year, month = map(int, year_month.split('-'))
+    ordinal = year * 12 + month - 1 + offset
+    return f'{ordinal // 12:04d}-{ordinal % 12 + 1:02d}'
+
+
+def _generation_settings(c: sqlite3.Cursor) -> dict:
+    rows = dict(c.execute('SELECT setting_key,setting_value FROM system_settings').fetchall())
+    mode = rows.get('generation_mode')
+    if mode is None:
+        mode = 'source_monthly' if c.execute('SELECT 1 FROM source_roster_tracks LIMIT 1').fetchone() else 'legacy'
+    return dict(mode=mode, prior_gap_days=int(rows.get('source_prior_gap_days', '30')),
+                current_month_only=_skip_current_month_only(c))
+
+
+def get_generation_settings() -> dict:
+    conn = get_conn()
+    try:
+        return _generation_settings(conn.cursor())
+    finally:
+        conn.close()
+
+
+def set_generation_settings(mode: str, prior_gap_days: int, current_month_only: bool) -> None:
+    if mode not in ('source_monthly', 'legacy') or not 0 <= prior_gap_days <= 365:
+        raise ValueError('배정 방식과 이전 근무 제한 일수(0~365)를 확인하세요.')
+    conn = get_conn()
+    try:
+        with conn:
+            _ensure_system_settings(conn.cursor())
+            for key, value in (('generation_mode', mode), ('source_prior_gap_days', str(prior_gap_days)),
+                               ('skip_current_month_only', '1' if current_month_only else '0')):
+                conn.execute('INSERT OR REPLACE INTO system_settings VALUES (?,?)', (key, value))
+    finally:
+        conn.close()
+
+
+def _regular_dates(c: sqlite3.Cursor, emp_id: int, first: str, last: str) -> list[str]:
+    return [r[0] for r in c.execute('''SELECT h.duty_date FROM duty_history h
+        JOIN employees e ON e.id=h.emp_id
+        WHERE h.emp_id=? AND h.duty_date BETWEEN ? AND ?
+        AND NOT EXISTS (SELECT 1 FROM manual_overrides m
+            WHERE m.emp_no=e.emp_no AND m.target_date=h.duty_date
+            AND (m.reason LIKE '%벌당직%' OR m.reason LIKE '%대근%'))
+        ORDER BY h.duty_date DESC''', (emp_id, first, last)).fetchall()]
+
+
+def _source_conflict(c: sqlite3.Cursor, emp_id: int, duty_date: str,
+                     pointer_key: str, settings: dict) -> tuple[str, str] | None:
+    """충돌 사유와 최초 수행/예정일. 같은 달의 미래 평일 배정도 조회한다."""
+    day = datetime.date.fromisoformat(duty_date)
+    if c.execute('SELECT 1 FROM duty_history WHERE emp_id=? AND duty_date=?', (emp_id, duty_date)).fetchone():
+        return 'same_day', duty_date
+    first = day.replace(day=1)
+    last = day.replace(day=calendar.monthrange(day.year, day.month)[1])
+    dates = _regular_dates(c, emp_id, first.isoformat(), last.isoformat())
+    if not settings['current_month_only']:
+        dates = [date for date in dates if abs((datetime.date.fromisoformat(date) - day).days) <= DUTY_GAP_DAYS]
+    if dates:
+        return 'same_month', dates[0]
+    gap = settings['prior_gap_days'] if pointer_key in (PTR_FWD, PTR_REV) else 0
+    if gap:
+        dates = _regular_dates(c, emp_id, (day - datetime.timedelta(days=gap)).isoformat(),
+                               (first - datetime.timedelta(days=1)).isoformat())
+        if dates:
+            return 'recent_gap', dates[0]
+    return None
+
+
+def _choose_source_monthly(c: sqlite3.Cursor, date: str, group: str,
+                           pointer: str, settings: dict) -> tuple[int, str]:
+    # 벌당직/대근 등 수동 자리는 정규/복귀 순번을 진행하지 않는다.
+    groups = (group, GROUP_FIRST if group == GROUP_SEN else group)
+    manual = c.execute('''SELECT e.id,e.name FROM manual_overrides m JOIN employees e ON e.emp_no=m.emp_no
+        WHERE m.target_date=? AND m.duty_group IN (?,?) ORDER BY m.id''', (date, *groups)).fetchall()
+    if manual:
+        if len(manual) != 1:
+            raise ValueError(f'{date} {group}: 같은 자리에 수동 예외가 여러 건입니다.')
+        emp_id, name = manual[0]
+        if c.execute('SELECT 1 FROM duty_history WHERE emp_id=? AND duty_date=?', (emp_id, date)).fetchone():
+            raise ValueError(f'{date}: {name}의 같은 날 중복 수동 배정입니다.')
+        return emp_id, name + '(수동)'
+    ym = date[:7]
+    # 이번 달 복귀 묶음을 우선하고 미소진된 이전 묶음은 이후 달에도 보존한다.
+    returns = c.execute('''SELECT q.id,q.emp_id,e.name FROM skip_queue q JOIN employees e ON e.id=q.emp_id
+        LEFT JOIN source_roster_tracks t ON t.emp_id=e.id AND t.pointer_key=?
+        WHERE q.pointer_key=? AND q.return_year_month<=? AND q.is_returned=0
+        AND e.duty_group=? AND COALESCE(t.is_active,e.is_active)=1
+        ORDER BY q.return_year_month DESC,q.skipped_date,q.id''', (pointer, pointer, ym, group)).fetchall()
+    for queue_id, emp_id, name in returns:
+        if _source_conflict(c, emp_id, date, pointer, settings) is None:
+            c.execute('UPDATE skip_queue SET is_returned=1,returned_date=? WHERE id=?', (date, queue_id))
+            return emp_id, name + '(복귀)'
+    reverse = pointer == PTR_REV
+    direction = 'DESC' if reverse else 'ASC'
+    rows = c.execute(f'''SELECT e.id,e.name,COALESCE(t.is_active,e.is_active) FROM employees e
+        LEFT JOIN source_roster_tracks t ON t.emp_id=e.id AND t.pointer_key=? WHERE e.duty_group=?
+        ORDER BY COALESCE(t.track_idx,CASE WHEN ? THEN
+            (SELECT count(*) FROM employees other WHERE other.duty_group=e.duty_group AND other.group_idx>=e.group_idx)
+            ELSE e.group_idx END),e.group_idx {direction},e.id {direction}''', (pointer, group, reverse)).fetchall()
+    last = c.execute('SELECT emp_id FROM system_state WHERE pointer_key=?', (pointer,)).fetchone()
+    positions = {row[0]: idx for idx, row in enumerate(rows)}
+    start = (positions[last[0]] + 1) % len(rows) if last and last[0] in positions else 0
+    for offset in range(len(rows)):
+        emp_id, name, active = rows[(start + offset) % len(rows)]
+        if not active:
+            continue
+        conflict = _source_conflict(c, emp_id, date, pointer, settings)
+        if conflict is None:
+            c.execute('REPLACE INTO system_state VALUES (?,?)', (pointer, emp_id))
+            return emp_id, name
+        reason, anchor = conflict
+        # 복귀월은 최초 정규 근무(예정)월의 두 달 뒤이다.
+        returning = _add_months(anchor[:7], 2)
+        exists = c.execute('''SELECT 1 FROM skip_queue WHERE emp_id=? AND pointer_key=?
+            AND skipped_date LIKE ? AND return_year_month=?''', (emp_id, pointer, ym + '%', returning)).fetchone()
+        if not exists:
+            c.execute('''INSERT INTO skip_queue(emp_id,skipped_date,return_year_month,pointer_key,skip_reason,source_duty_date)
+                         VALUES (?,?,?,?,?,?)''', (emp_id, date, returning, pointer, reason, anchor))
+    raise ValueError(f'{date} {group}: 조건을 만족하는 배정 대상자가 없습니다.')
+
+
+def _generate_source_monthly(start: datetime.date, end: datetime.date) -> None:
+    """월 단위로 평일 숙직을 먼저 확정하고 휴일 순번 충돌을 처리한다."""
+    if start.day != 1 or end.day != calendar.monthrange(end.year, end.month)[1]:
+        raise ValueError('원본 월별 방식은 월 전체를 생성하세요. 부분 기간은 기존 날짜순 방식을 사용하세요.')
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            c = conn.cursor()
+            if c.execute('SELECT 1 FROM duty_history WHERE duty_date>? LIMIT 1', (end.isoformat(),)).fetchone():
+                raise ValueError('생성 기간 이후의 당직 데이터가 있습니다. 이후 월을 먼저 삭제한 뒤 순서대로 생성하세요.')
+            settings = _generation_settings(c)
+            months = sorted({day.strftime('%Y-%m') for day in days_of_month_iter(start, end)})
+            for ym in months:
+                days = [day for day in days_of_month_iter(start, end) if day.strftime('%Y-%m') == ym]
+                snap = c.execute('SELECT snapshot FROM system_state_snapshot WHERE year_month=?', (ym,)).fetchone()
+                if snap is not None:
+                    c.execute('DELETE FROM system_state')
+                    for pair in snap[0].split(';'):
+                        if '=' in pair:
+                            key, emp_id = pair.split('=', 1)
+                            c.execute('INSERT INTO system_state VALUES (?,?)', (key, int(emp_id)))
+                else:
+                    snapshot = ';'.join(f'{key}={emp_id}' for key, emp_id in c.execute('SELECT * FROM system_state').fetchall())
+                    c.execute('INSERT INTO system_state_snapshot VALUES (?,?)', (ym, snapshot))
+                c.execute('DELETE FROM duty_history WHERE duty_date BETWEEN ? AND ?', (days[0].isoformat(), days[-1].isoformat()))
+                c.execute('DELETE FROM skip_queue WHERE skipped_date LIKE ?', (ym + '%',))
+                c.execute('''UPDATE skip_queue SET is_returned=0,returned_date=NULL
+                    WHERE returned_date LIKE ? OR (returned_date IS NULL AND return_year_month=?)''', (ym + '%', ym))
+                c.execute('DELETE FROM system_state_snapshot WHERE year_month>?', (ym,))
+                kr = holidays.KR(years=[days[0].year])
+                weekdays = [day for day in days if day.weekday() < 5 and day not in kr]
+                holidays_in_month = [day for day in days if day not in weekdays]
+                slots = [(day, GROUP_SUK, PTR_FWD) for day in weekdays]
+                slots += [(day, group, pointer) for day in holidays_in_month
+                          for group, pointer in ((GROUP_SEN, PTR_SEN), (GROUP_JUN, PTR_JUN), (GROUP_SUK, PTR_REV))]
+                for day, group, pointer in slots:
+                    emp_id, name = _choose_source_monthly(c, day.isoformat(), group, pointer, settings)
+                    kind = '숙직' if group == GROUP_SUK else '일직'
+                    c.execute('INSERT INTO duty_history(duty_date,duty_type,emp_id) VALUES (?,?,?)', (day.isoformat(), kind, emp_id))
+                    print(f'{day} {kind}: {name}')
+    finally:
+        conn.close()
+
+
 def generate_duty_plan(start_str: str, end_str: str) -> None:
     """지정 기간(포함)의 당직 배정을 생성하고 duty_history에 기록한다."""
     start = datetime.datetime.strptime(start_str, "%Y-%m-%d").date()
@@ -403,9 +877,12 @@ def generate_duty_plan(start_str: str, end_str: str) -> None:
         print("종료일이 시작일보다 빠릅니다.")
         return
 
+    init_db()
+    if get_generation_settings()['mode'] == 'source_monthly':
+        _generate_source_monthly(start, end)
+        return
     conn = get_conn()
     c = conn.cursor()
-    init_db()
     # 기간 재생성 시 중복 방지: 해당 기간의 기존 배정 기록은 덮어쓴다(수동 배정은 유지).
     c.execute("DELETE FROM duty_history WHERE duty_date BETWEEN ? AND ?", (start_str, end_str))
     conn.commit()
@@ -520,7 +997,12 @@ def _employee_snapshots(c: sqlite3.Cursor, emp_id: int | None = None) -> list[di
 
 def _record_employee_change(c: sqlite3.Cursor, before: dict | None, after: dict,
                             change_type: str, reason: str, effective_date: str,
-                            source: str = '직원 관리') -> None:
+                            source: str = '직원 관리') -> bool:
+    # 실제 직원 순번은 유지하되 변동 이력의 전후 상태에서는 제외한다.
+    before = {k: v for k, v in before.items() if k != 'group_idx'} if before is not None else None
+    after = {k: v for k, v in after.items() if k != 'group_idx'}
+    if before == after and change_type in ('정보변경', '엑셀변경'):
+        return False
     _ensure_employee_change_history(c)
     recorded = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).isoformat(timespec='seconds')
     c.execute('''INSERT INTO employee_change_history
@@ -530,6 +1012,41 @@ def _record_employee_change(c: sqlite3.Cursor, before: dict | None, after: dict,
                reason.strip() or '사유 미입력', source,
                json.dumps(before, ensure_ascii=False) if before is not None else None,
                json.dumps(after, ensure_ascii=False)))
+    return True
+
+
+def remove_employee_order_history() -> dict:
+    """백업 후 순번만 바뀐 이력을 삭제하고 나머지 이력의 순번 필드를 제거한다."""
+    conn = get_conn()
+    try:
+        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        backup = os.path.join(os.path.dirname(os.path.abspath(DB_NAME)),
+                              f'duty_system_v3_before_history_cleanup_{stamp}.db')
+        with sqlite3.connect(backup) as dest:
+            conn.backup(dest)
+        deleted, updated = [], []
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            rows = conn.execute('SELECT id,change_type,before_state,after_state FROM employee_change_history').fetchall()
+            for row_id, kind, before_json, after_json in rows:
+                before = json.loads(before_json) if before_json else None
+                after = json.loads(after_json)
+                clean_before = {k: v for k, v in before.items() if k != 'group_idx'} if before is not None else None
+                clean_after = {k: v for k, v in after.items() if k != 'group_idx'}
+                if (before is not None and kind in ('정보변경', '엑셀변경')
+                        and before.get('group_idx') != after.get('group_idx')
+                        and clean_before == clean_after):
+                    conn.execute('DELETE FROM employee_change_history WHERE id=?', (row_id,))
+                    deleted.append(row_id)
+                elif before != clean_before or after != clean_after:
+                    conn.execute('UPDATE employee_change_history SET before_state=?,after_state=? WHERE id=?',
+                                 (json.dumps(clean_before, ensure_ascii=False) if clean_before is not None else None,
+                                  json.dumps(clean_after, ensure_ascii=False), row_id))
+                    updated.append(row_id)
+        return {'backup': backup, 'deleted_ids': deleted, 'updated_ids': updated,
+                'deleted': len(deleted), 'updated': len(updated), 'remaining': len(rows) - len(deleted)}
+    finally:
+        conn.close()
 
 
 def register_employee(emp_no: str, name: str, dept: str, duty_group: str,
@@ -575,6 +1092,7 @@ def transfer_out_employee(emp_id: int, reason: str = '', effective_date: str | N
             if not previous:
                 return False
             before = previous[0]
+            c.execute("UPDATE source_roster_tracks SET is_active=0 WHERE emp_id=?", (emp_id,))
             _ensure_employee_change_history(c)
             last = c.execute('SELECT change_type FROM employee_change_history WHERE emp_id=? '
                              'ORDER BY id DESC LIMIT 1', (emp_id,)).fetchone()
@@ -605,6 +1123,11 @@ def update_employee(emp_id: int, duty_group: str, group_idx: int,
                       (duty_group, int(group_idx), str(name).strip(), dept, 1 if int(is_active) else 0, emp_id))
             after = _employee_snapshots(c, emp_id)[0]
             if before != after:
+                if before['duty_group'] != after['duty_group'] or before['group_idx'] != after['group_idx']:
+                    c.execute('DELETE FROM source_roster_tracks WHERE emp_id=?', (emp_id,))
+                elif before['is_active'] != after['is_active']:
+                    c.execute('UPDATE source_roster_tracks SET is_active=? WHERE emp_id=?',
+                              (after['is_active'], emp_id))
                 change_type = '정보변경'
                 if before['is_active'] != after['is_active']:
                     change_type = '제외' if not after['is_active'] else '활성복구'
@@ -645,11 +1168,12 @@ def list_employee_changes(keyword: str = '', emp_id: int | None = None,
             if page_size is None:
                 c.execute(query, params)
             else:
-                c.execute(query + ' LIMIT ? OFFSET ?', [*params, page_size, (max(1, page) - 1) * page_size])
+                page = min(max(1, page), max(1, (total + page_size - 1) // page_size))
+                c.execute(query + ' LIMIT ? OFFSET ?', [*params, page_size, (page - 1) * page_size])
             names = [column[0] for column in c.description]
             rows = [dict(zip(names, row)) for row in c.fetchall()]
             labels = {'name': '성명', 'emp_no': '사번', 'dept': '부서', 'duty_group': '당직그룹',
-                      'group_idx': '순번', 'is_active': '상태'}
+                      'is_active': '상태'}
             for row in rows:
                 before = json.loads(row['before_state']) if row['before_state'] else {}
                 after = json.loads(row['after_state'])
@@ -735,6 +1259,114 @@ def get_assignments(year_month: str) -> list[tuple]:
                                        grade_order.get(r[4], 99), r[2], r[3]))
 
 
+def export_assignments_excel(year_month: str) -> bytes:
+    """화면과 같은 월별 배정을 원본 당직명령 형태의 XLSX로 출력한다(DB 쓰기 없음)."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.page import PageMargins
+
+    try:
+        month = datetime.datetime.strptime(year_month, '%Y-%m').date()
+    except ValueError as exc:
+        raise ValueError('올바르지 않은 연월입니다 (YYYY-MM).') from exc
+    if year_month != month.strftime('%Y-%m'):
+        raise ValueError('올바르지 않은 연월입니다 (YYYY-MM).')
+    rows = get_assignments(year_month)
+    if not rows:
+        raise ValueError(f'{year_month}에 다운로드할 배정이 없습니다.')
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '당직명령'
+    ws.sheet_view.showGridLines = False
+    # docs 원본과 같은 B:I 열 구성, 열 너비, 제목·머리글·본문 높이.
+    widths = {'A': 1.78, 'B': 6.55, 'C': 7.55, 'D': 6.33, 'E': 9.89,
+              'F': 8.66, 'G': 10.89, 'H': 22.44, 'I': 13.22}
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+    ws.merge_cells('B1:I1')
+    ws['B1'] = f'{month.year}년 {month.month}월 당직명령'
+    ws['B1'].font = Font(name='HY헤드라인M', size=20)
+    ws['B1'].alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 32.25
+    ws.row_dimensions[2].height = 9.95
+    ws.row_dimensions[3].height = 20.25
+    edge = Side(style='thin', color='000000')
+    border = Border(left=edge, right=edge, top=edge, bottom=edge)
+    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    for col, title in enumerate(('일자', '요일', '구분', '당직비', '성명', '사번', '변경사항', '서명'), 2):
+        cell = ws.cell(3, col, title)
+        cell.font = Font(name='돋움', size=11, bold=True)
+        cell.fill = PatternFill('solid', fgColor='EBF1DE')
+        cell.border = border
+        cell.alignment = center
+
+    calendars = {}
+    row_number = 4
+    for duty_date, daily_rows in groupby(rows, key=lambda row: row[0]):
+        daily = list(daily_rows)
+        date = datetime.date.fromisoformat(duty_date[:10])
+        if date.year not in calendars:
+            calendars[date.year] = holidays.KR(years=[date.year])
+        holiday = date.weekday() >= 5 or date in calendars[date.year]
+        start = row_number
+        for _, duty_type, name, emp_no, _, kind in daily:
+            manual = kind != '배정'
+            values = (date.day, '월화수목금토일'[date.weekday()], duty_type,
+                      None, name, emp_no, kind if manual else None, None)
+            for col, value in enumerate(values, 2):
+                cell = ws.cell(row_number, col, value)
+                # 이름·사유가 '='로 시작해도 수식으로 실행하지 않고 문자 그대로 내보낸다.
+                if isinstance(value, str):
+                    cell.data_type = 's'
+                cell.font = Font(name='돋움', size=10 if col in (6, 7) else 11,
+                                 bold=manual and col in (6, 7),
+                                 color='FF0000' if col == 3 and holiday else '000000')
+                cell.alignment = center
+                cell.border = border
+                if manual and col >= 6:
+                    cell.fill = PatternFill('solid', fgColor='FFF2CC')
+                if col == 7:
+                    cell.number_format = '@'
+            ws.row_dimensions[row_number].height = 15
+            row_number += 1
+        if row_number - start > 1:
+            for col in ('B', 'C'):
+                ws.merge_cells(f'{col}{start}:{col}{row_number - 1}')
+        # 같은 날짜의 연속된 동일 구분을 원본처럼 병합한다(예: 일직 2명).
+        group_start = start
+        for _, same_type in groupby(daily, key=lambda row: row[1]):
+            count = len(list(same_type))
+            if count > 1:
+                ws.merge_cells(start_row=group_start, start_column=4,
+                               end_row=group_start + count - 1, end_column=4)
+            group_start += count
+
+    note_row = row_number + 1
+    for offset, note in enumerate(('※ 당직비·서명은 확인 후 작성해 주세요.',
+                                   '※ 굵은 글씨·노란색은 수동 배정이며, 변경사항에 사유를 표시합니다.')):
+        ws.merge_cells(start_row=note_row + offset, start_column=2,
+                       end_row=note_row + offset, end_column=9)
+        cell = ws.cell(note_row + offset, 2, note)
+        cell.font = Font(name='돋움', size=9)
+        cell.alignment = Alignment(vertical='center', wrap_text=True)
+        ws.row_dimensions[note_row + offset].height = 20
+    ws.freeze_panes = 'F4'
+    ws.print_area = f'B1:I{note_row + 1}'
+    ws.print_title_rows = '1:3'
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.orientation = 'portrait'
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.print_options.horizontalCentered = True
+    ws.page_margins = PageMargins(left=0.24, right=0.24, top=0.25, bottom=0.25,
+                                  header=0.1, footer=0.1)
+    output = BytesIO()
+    wb.save(output)
+    wb.close()
+    return output.getvalue()
+
+
 def regenerate_month(date_str: str) -> None:
     """지정 날짜가 속한 달 전체를 다시 배정한다(수동 배정 반영 등)."""
     d = datetime.datetime.strptime(date_str[:10], "%Y-%m-%d").date()
@@ -801,7 +1433,7 @@ def delete_month(year_month: str) -> dict:
     hist = int(c.execute("SELECT COUNT(*) FROM duty_history WHERE duty_date LIKE ?", (prefix,)).fetchone()[0])
     skips = int(c.execute("SELECT COUNT(*) FROM skip_queue WHERE skipped_date LIKE ?", (prefix,)).fetchone()[0])
     restored = int(c.execute(
-        "SELECT COUNT(*) FROM skip_queue WHERE is_returned = 1 AND return_year_month = ?", (ym,)).fetchone()[0])
+        "SELECT COUNT(*) FROM skip_queue WHERE is_returned = 1 AND (return_year_month = ? OR returned_date LIKE ?)", (ym, ym + '%')).fetchone()[0])
 
     if hist:
         c.execute("SELECT snapshot FROM system_state_snapshot WHERE year_month = ?", (ym,))
@@ -822,7 +1454,7 @@ def delete_month(year_month: str) -> dict:
     else:
         method = 'none'
 
-    c.execute("UPDATE skip_queue SET is_returned = 0 WHERE is_returned = 1 AND return_year_month = ?", (ym,))
+    c.execute("UPDATE skip_queue SET is_returned = 0,returned_date=NULL WHERE is_returned = 1 AND (return_year_month = ? OR returned_date LIKE ?)", (ym, ym + '%'))
     c.execute("DELETE FROM skip_queue WHERE skipped_date LIKE ?", (prefix,))
     c.execute("DELETE FROM duty_history WHERE duty_date LIKE ?", (prefix,))
     c.execute("DELETE FROM system_state_snapshot WHERE year_month >= ?", (ym,))

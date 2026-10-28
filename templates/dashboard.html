@@ -13,6 +13,7 @@
   <input type="text" name="month" value="{{ year_month }}" placeholder="YYYY-MM" size="7">
   <button type="submit">조회</button>
   <button type="button" onclick="location='{{ url_for('dashboard', month=year_month) }}'">초기화</button>
+  <button type="submit" formaction="{{ url_for('download_assignments_excel') }}">엑셀 다운로드</button>
 </form>
 <form class="toolbar" method="post" action="{{ url_for('regenerate') }}">
   <input type="hidden" name="month" value="{{ year_month }}">
@@ -22,8 +23,12 @@
   <span class="small">※ 재배정 시 해당 월의 기존 자동 배정 기록은 덮어씁니다(수동 배정은 유지).</span>
 </form>
 
+<div class="assignment-scroll" role="region" aria-label="{{ year_month }} 배정현황" tabindex="0">
 <table>
+  <thead>
   <tr><th>날짜</th><th>요일</th><th>분류</th><th>성명</th><th>사번</th><th>당직그룹</th><th>비고</th></tr>
+  </thead>
+  <tbody>
   {% for r in rows %}
   <tr class="{{ r.day_class }} {{ 'manual-row' if r.kind }}">
     <td>{{ r.date }}</td>
@@ -35,6 +40,8 @@
     <td>{{ r.kind }}</td>
   </tr>
   {% endfor %}
+  </tbody>
 </table>
+</div>
 <p class="small">색 구분: 핑크 = 주말 · 주황 = 공휴일 · 노랑 = 수동 배정. 공휴일은 요일 옆에 이름을 표시합니다.</p>
 {% endblock %}

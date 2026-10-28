@@ -2,17 +2,29 @@
 {% block content %}
 <h2>시스템 관리</h2>
 
-<h3>스킵 정책 설정</h3>
+<h3>배정 및 스킵 정책 설정</h3>
 <form method="post" action="{{ url_for('admin_skip_policy') }}">
+  <label>배정 방식
+    <select name="generation_mode">
+      <option value="source_monthly" {{ 'selected' if generation_settings.mode == 'source_monthly' }}>원본 월별 방식 (평일 숙직 우선)</option>
+      <option value="legacy" {{ 'selected' if generation_settings.mode == 'legacy' }}>기존 날짜순 방식</option>
+    </select>
+  </label>
   <label><input type="checkbox" name="skip_current_month_only" {{ 'checked' if skip_current_month_only }}>
-    해당 월에만 스킵 정책 반영</label>
+    당월 정규 근무 중복 방지</label>
+  <label>원본 월별 방식의 이전 근무 간격 제한
+    <input type="number" name="prior_gap_days" value="{{ generation_settings.prior_gap_days }}" min="0" max="365" required>일 (0: 해제)
+  </label>
   <button type="submit">정책 저장</button>
 </form>
 <p class="small">
-  체크: 해당 월에 이미 정규 근무한 직원을 스킵합니다. 이전 달 근무는 스킵 기준에 포함하지 않습니다.<br>
-  해제: 이전 28일 이내 정규 근무한 직원을 스킵합니다.<br>
-  두 정책 모두 벌당직·대근 예외와 스킵 순번의 익익월 복귀를 유지합니다.
-  설정은 DB에 저장되며 이후 배정 생성에 적용됩니다. 기존 생성 결과는 자동으로 바뀌지 않습니다.
+  원본 월별 방식은 평일 숙직을 먼저 확정하고, 휴일 숙직과 충돌하면 휴일 순번을 스킵합니다.<br>
+  체크하면 같은 달에 정규 근무했거나 근무 예정인 직원은 다른 순번에서 스킵합니다.<br>
+  해제하면 당월 근무 간격이 28일 이내인 경우만 스킵합니다.<br>
+  이전 달 근무에 대한 간격 제한은 체크 여부와 관계없이 별도 설정에 따라 적용됩니다. 7~10월 원본 재현값은 30일이며, 원본의 ‘4주’ 문구와 차이가 있어 일수를 바꿀 수 있습니다.<br>
+  복귀는 최초 정규 근무·예정 월의 두 달 뒤, 원래 순번에서 우선 배정합니다. 미소진 대기는 다음 달에도 유지하며 해당 월에 복귀하는 묶음부터 처리합니다.<br>
+  기존 날짜순 방식에서는 체크 시 당월, 해제 시 이전 28일의 근무를 기준으로 판단합니다.<br>
+  벌당직·대근은 정규 근무 간격 계산에서 제외합니다. 기존 생성분은 정책 저장만으로 변경되지 않습니다.
 </p>
 
 <h3>DB 현황</h3>

@@ -10,8 +10,10 @@
 
 import datetime
 import os
+import tempfile
+from io import BytesIO
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, Response, flash, redirect, render_template, request, send_file, url_for
 
 import dangjik_basic1 as dy
 
@@ -49,6 +51,24 @@ def dashboard() -> str:
         'overrides': _count('manual_overrides'),
     }
     return render_template('dashboard.html', rows=rows, year_month=year_month, counts=counts)
+
+
+@app.route('/export/excel')
+def download_assignments_excel() -> Response:
+    year_month = request.args.get('month', '')
+    if not _is_valid_ym(year_month):
+        flash('올바르지 않은 연월입니다 (YYYY-MM).', 'error')
+        return redirect(url_for('dashboard'))
+    try:
+        content = dy.export_assignments_excel(year_month)
+    except ValueError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('dashboard', month=year_month))
+    return send_file(
+        BytesIO(content), as_attachment=True,
+        download_name=f'{year_month}_본사_당직명령.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
 
 
 _HOL_NAME_KR = {
@@ -119,20 +139,29 @@ def upload() -> str:
             flash('업로드할 파일을 선택하세요.', 'error')
             return redirect(url_for('upload'))
         if not file.filename.lower().endswith('.xlsx'):
-            flash('.xlsx 입력양식 파일만 업로드할 수 있습니다.', 'error')
+            flash('원본 당직명령 또는 기존 입력양식의 .xlsx 파일을 선택하세요. .xls는 .xlsx로 변환해 주세요.', 'error')
             return redirect(url_for('upload'))
         os.makedirs(UPLOAD_DIR, exist_ok=True)
-        filename = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
-        file_path = os.path.join(UPLOAD_DIR, filename)
-        file.save(file_path)
+        with tempfile.NamedTemporaryFile(dir=UPLOAD_DIR, suffix='.xlsx', delete=False) as staged:
+            file_path = staged.name
         try:
-            dy.load_initial_data(file_path)
+            file.save(file_path)
+            result = dy.import_uploaded_workbook(file_path, roster_only=request.form.get('import_scope') == 'roster')
         except Exception as exc:  # noqa: BLE001 — 업로드 파일 형식 오류를 사용자에게 안내
             flash(f'업로드 처리 실패: {exc}', 'error')
             return redirect(url_for('upload'))
         finally:
             os.remove(file_path)
-        flash(f'입력양식 등록 완료: {file.filename}', 'success')
+        if result['format'] == 'original_roster':
+            flash(f"원본 {result['month']} 직원 명부만 갱신했습니다: {result['employees']}명. "
+                  f"기존 당직 이력·스킵·시작 순번은 보존했습니다. 백업: {result['backup']}", 'success')
+        elif result['format'] == 'original':
+            flash(f"원본 {result['month']} 기준 등록 완료: 직원 {result['employees']}명, "
+                  f"당직 {result['duties']}건, 스킵 {result['skips']}건. 백업: {result['backup']}", 'success')
+        else:
+            flash(f'입력양식 등록 완료: {file.filename}', 'success')
+        for warning in result['warnings']:
+            flash(warning, 'info')
         return redirect(url_for('upload'))
     return render_template('upload.html')
 
@@ -145,7 +174,11 @@ def generate() -> str:
         if not _is_valid_ym(year_month):
             flash('연월 형식은 YYYY-MM 입니다.', 'error')
             return redirect(url_for('generate'))
-        dy.regenerate_month(year_month + '-01')
+        try:
+            dy.regenerate_month(year_month + '-01')
+        except ValueError as exc:
+            flash(f'배정 생성 실패: {exc}', 'error')
+            return redirect(url_for('generate'))
         flash(f'{year_month} 배정 생성 완료.', 'success')
         return redirect(url_for('dashboard', month=year_month))
     return render_template('generate.html')
@@ -173,8 +206,12 @@ def manual() -> str:
         flash(f'수동 배정 등록 {"완료" if ok else "실패"}: {target_date} {emp["name"]}({emp["no"]}) {reason}',
               'success' if ok else 'error')
         if request.form.get('regen') == 'on':
-            dy.regenerate_month(target_date)
-            flash(f'{target_date[:7]} 전체 재배정 완료 (수동 배정 반영)', 'success')
+            try:
+                dy.regenerate_month(target_date)
+            except ValueError as exc:
+                flash(f'수동 예외는 저장됐지만 재배정하지 못했습니다: {exc}', 'error')
+            else:
+                flash(f'{target_date[:7]} 전체 재배정 완료 (수동 배정 반영)', 'success')
         return redirect(url_for('manual'))
     overrides = _list_overrides()
     employees = [ '|'.join((e[1], str(e[2]), e[3], str(e[4]))) for e in _list_active_for_select() ]
@@ -302,9 +339,30 @@ def employee_history() -> str:
     emp_id = request.args.get('emp_id', type=int)
     keyword = request.args.get('q', '').strip()
     change_type = request.args.get('type', '')
-    rows, total = dy.list_employee_changes(keyword, emp_id, change_type, page_size=None)
+    page = max(1, request.args.get('page', default=1, type=int))
+    page_size = 50
+    rows, total = dy.list_employee_changes(keyword, emp_id, change_type, page=page, page_size=page_size)
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = min(page, pages)
     return render_template('employee_history.html', rows=rows, total=total, emp_id=emp_id,
-                           keyword=keyword, change_type=change_type)
+                           keyword=keyword, change_type=change_type, page=page, pages=pages,
+                           first=(page - 1) * page_size + 1 if total else 0,
+                           last=min(page * page_size, total))
+
+
+@app.template_filter('history_time')
+def format_history_time(value: str) -> str:
+    """저장된 이력 시각을 한국 시간의 날짜·시간으로 표시한다."""
+    if not value:
+        return '—'
+    try:
+        stamp = datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return '—'
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=kst)
+    return stamp.astimezone(kst).strftime('%Y-%m-%d %H시')
 
 
 @app.route('/admin')
@@ -317,15 +375,23 @@ def admin() -> str:
         'overrides': _count('manual_overrides'),
     }
     return render_template('admin.html', counts=counts, months=dy.list_months(),
-                           skip_current_month_only=dy.get_skip_current_month_only())
+                           skip_current_month_only=dy.get_skip_current_month_only(),
+                           generation_settings=dy.get_generation_settings())
 
 
 @app.route('/admin/skip-policy', methods=['POST'])
 def admin_skip_policy() -> str:
     enabled = request.form.get('skip_current_month_only') == 'on'
-    dy.set_skip_current_month_only(enabled)
-    flash('스킵 정책을 저장했습니다. ' + ('해당 월의 정규 근무를 기준으로 판단합니다.' if enabled
-                                      else '이전 28일의 정규 근무를 기준으로 판단합니다.'), 'success')
+    try:
+        if 'generation_mode' in request.form:
+            dy.set_generation_settings(request.form['generation_mode'],
+                                       int(request.form.get('prior_gap_days', '30')), enabled)
+        else:
+            dy.set_skip_current_month_only(enabled)
+    except (ValueError, TypeError) as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('admin'))
+    flash('배정 및 스킵 정책을 저장했습니다. 이후 생성부터 적용됩니다.', 'success')
     return redirect(url_for('admin'))
 
 
