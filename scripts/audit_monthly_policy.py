@@ -21,7 +21,7 @@ from scripts.compare_april import read_order
 
 def run_audit(gap_days: int = 30) -> dict:
     originals = {m: ROOT / f'docs/2026년_{m}월_본사_당직명령.xlsx' for m in range(6, 11)}
-    protected = [*originals.values(), ROOT / 'duty_system_v3.db', ROOT / 'duty_system_v2.db']
+    protected = [*originals.values(), Path(dy.DB_NAME), Path(dy.V2_DB_NAME)]
     hashes = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in protected if p.exists()}
     previous_db = dy.DB_NAME
     results: list[dict] = []

@@ -19,12 +19,17 @@ import calendar
 import json
 from io import BytesIO
 from itertools import groupby
+from pathlib import Path
+import tempfile
 import holidays
 
 import openpyxl
 
-DB_NAME = 'duty_system_v3.db'
-V2_DB_NAME = 'duty_system_v2.db'
+PROJECT_DIR = Path(__file__).resolve().parent
+DATA_DIR = PROJECT_DIR / 'data'
+DEFAULT_DB_NAME = str(DATA_DIR / 'duty_system_v3.db')
+DB_NAME = DEFAULT_DB_NAME
+V2_DB_NAME = str(DATA_DIR / 'duty_system_v2.db')
 MASTER_FILE = '당직명령시스템_2월통합_입력양식.xlsx'
 
 # 트랙 → pointer_key 매핑 (duty_system_v2.db의 system_state와 호환)
@@ -43,8 +48,41 @@ DUTY_GAP_DAYS = 28          # 당월 스킵 정책 해제 시 사용할 간격
 SKIP_RETURN_OFFSET_DAYS = 62  # 스킵자 복귀 시점: 최초 수행(스킵)일 기준 익익월
 
 
+def _prepare_database_path() -> None:
+    """DB 폴더 생성 및 구버전 루트 DB 호환 복사(원본 보존, 기존 대상 덮어쓰기 금지)."""
+    Path(DB_NAME).resolve().parent.mkdir(parents=True, exist_ok=True)
+    if os.path.abspath(DB_NAME) != DEFAULT_DB_NAME:
+        return  # 임시 DB를 사용하는 테스트/감사에서는 운영 DB에 접근하지 않는다.
+    for filename in ('duty_system_v3.db', 'duty_system_v2.db'):
+        legacy = PROJECT_DIR / filename
+        target = DATA_DIR / filename
+        if target.exists() or not legacy.exists():
+            continue
+        with tempfile.NamedTemporaryFile(dir=DATA_DIR, suffix='.db', delete=False) as staged:
+            staged_path = Path(staged.name)
+        try:
+            sidecars = [Path(str(legacy) + suffix) for suffix in ('-wal', '-journal')]
+            if any(p.exists() and p.stat().st_size for p in sidecars):
+                with sqlite3.connect(legacy.as_uri() + '?mode=ro', uri=True) as source:
+                    with sqlite3.connect(staged_path) as dest:
+                        source.backup(dest)
+            else:
+                shutil.copyfile(legacy, staged_path)
+            with sqlite3.connect(staged_path.as_uri() + '?mode=ro', uri=True) as check:
+                if check.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                    raise ValueError(f'기존 DB 무결성 확인 실패: {legacy}')
+            # 동시에 다른 실행이 먼저 준비한 DB가 있으면 보존한다.
+            try:
+                os.link(staged_path, target)
+            except FileExistsError:
+                pass
+        finally:
+            staged_path.unlink(missing_ok=True)
+
+
 def get_conn() -> sqlite3.Connection:
     """현재 DB 파일에 대한 커넥션을 반환한다."""
+    _prepare_database_path()
     return sqlite3.connect(DB_NAME)
 
 
@@ -95,6 +133,7 @@ def migrate_v2_to_v3() -> None:
     v3가 없으면 v2 파일을 복사한 뒤 init_db()로 manual_overrides 테이블만 추가한다.
     원본 v2 파일은 데이터 자산이므로 보존한다(수정하지 않는다).
     """
+    _prepare_database_path()
     if os.path.exists(DB_NAME):
         return
     if os.path.exists(V2_DB_NAME):
@@ -113,9 +152,12 @@ def reset_database(backup: bool = True) -> str | None:
     - v2 원본(duty_system_v2.db)은 데이터 자산이므로 건드리지 않는다.
     반환: 백업 파일 경로(백업 시) 또는 None.
     """
+    _prepare_database_path()
     backup_path = backup_database() if backup else None
     if os.path.exists(DB_NAME):
         os.remove(DB_NAME)
+    # 구경로 호환 복사나 v2 재이관이 초기화한 DB를 되살리지 않도록 빈 파일을 먼저 남긴다.
+    sqlite3.connect(DB_NAME).close()
     init_db()
     print(f"[초기화] {DB_NAME} 완전 초기화 완료 (빈 스키마)")
     return backup_path

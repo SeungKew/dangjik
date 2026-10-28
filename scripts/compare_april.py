@@ -15,7 +15,7 @@ import sqlite3
 import openpyxl
 
 ROOT = Path(__file__).resolve().parents[1]
-DB = ROOT / 'duty_system_v3.db'
+DB = ROOT / 'data/duty_system_v3.db'
 SOURCE = ROOT / 'docs/2026년_4월_본사_당직명령.xlsx'
 OUT = ROOT / 'audit_results/2026-04'
 MONTH = 4
@@ -62,7 +62,7 @@ def read_db(db_path: Path) -> tuple[list[dict], dict]:
 
 
 def main() -> None:
-    protected = [SOURCE, DB, ROOT / 'duty_system_v2.db']
+    protected = [SOURCE, DB, ROOT / 'data/duty_system_v2.db']
     before = {p.name: fingerprint(p) for p in protected}
 
     actual = read_order(SOURCE, MONTH)

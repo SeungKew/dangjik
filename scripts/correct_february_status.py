@@ -91,7 +91,7 @@ def main() -> None:
     args = parser.parse_args()
     source = source_statuses(args.source)
     template = ROOT / '당직명령시스템_2월통합_입력양식.xlsx'
-    database = ROOT / 'duty_system_v3.db'
+    database = ROOT / 'data/duty_system_v3.db'
     wb = openpyxl.load_workbook(template)
     template_changes = correct_template(wb, source)
     with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as conn:

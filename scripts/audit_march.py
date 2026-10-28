@@ -130,7 +130,7 @@ def main() -> None:
     parser.add_argument('--march', type=Path, required=True)
     parser.add_argument('--out', type=Path, default=ROOT / 'audit_results/2026-03')
     args = parser.parse_args()
-    protected = [ROOT / 'duty_system_v2.db', ROOT / 'duty_system_v3.db',
+    protected = [Path(dy.V2_DB_NAME), Path(dy.DB_NAME),
                  ROOT / dy.MASTER_FILE, *sorted((ROOT / 'docs').glob('*'))]
     before = {str(p): fingerprint(p) for p in protected if p.is_file()}
     feb, actual = read_order(args.feb, 2), read_order(args.march, 3)

@@ -112,7 +112,7 @@ class EmployeeChangesTest(unittest.TestCase):
         self.assertEqual(dy.list_employees()[0][6], 1)
 
     def test_existing_v2_march_regression(self) -> None:
-        source_path = Path(__file__).resolve().parents[1] / 'duty_system_v2.db'
+        source_path = Path(dy.V2_DB_NAME)
         baseline_path = Path(__file__).parent / 'fixtures/v2_march_generation_before_employee_changes.json'
         expected = [tuple(row) for row in json.loads(baseline_path.read_text())]
         with sqlite3.connect(source_path.as_uri() + '?mode=ro', uri=True) as source:
