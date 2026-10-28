@@ -15,7 +15,7 @@
     <button type="button" class="stepper-btn btn-step-prev" title="이전 달 (1개월 감소)" aria-label="이전 달">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
     </button>
-    <input type="month" name="month" value="{{ year_month }}" class="stepper-input" placeholder="YYYY-MM" required>
+    <input type="text" name="month" value="{{ year_month }}" class="stepper-input" placeholder="YYYY-MM" pattern="[0-9]{4}-(0[1-9]|1[0-2])" maxlength="7" title="YYYY-MM 형식으로 입력하세요 (예: 2026-10)" required>
     <div class="stepper-spinners">
       <button type="button" class="spinner-btn btn-step-up" title="다음 달 (+1)" aria-label="다음 달">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
