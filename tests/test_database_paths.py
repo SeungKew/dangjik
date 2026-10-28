@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import dangjik_basic1 as dy
+from app import app
 
 
 class DatabasePathsTest(unittest.TestCase):
@@ -79,3 +80,46 @@ class DatabasePathsTest(unittest.TestCase):
             self.assertEqual(dy.list_employees(), [])
         self.assertFalse(self.data.exists())
         self.assertEqual(hashlib.sha256(legacy.read_bytes()).hexdigest(), fingerprint)
+
+    def test_web_first_request_creates_missing_database_and_all_pages_work(self) -> None:
+        self.assertFalse(self.data.exists())
+        with app.test_client() as client:
+            for url in ('/', '/upload', '/generate', '/manual', '/employees',
+                        '/employees/history', '/admin'):
+                with self.subTest(url=url):
+                    self.assertEqual(client.get(url).status_code, 200)
+        self.assertTrue(Path(dy.DB_NAME).exists())
+        with dy.get_conn() as conn:
+            self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+            self.assertEqual(conn.execute('SELECT count(*) FROM employees').fetchone()[0], 0)
+
+    def test_web_recovers_zero_byte_database_and_database_removed_while_running(self) -> None:
+        self.data.mkdir()
+        Path(dy.DB_NAME).touch()
+        with app.test_client() as client:
+            self.assertEqual(client.get('/').status_code, 200)
+            Path(dy.DB_NAME).unlink()
+            self.assertEqual(client.get('/').status_code, 200)
+
+    def test_web_import_startup_migrates_v2_and_preserves_data_on_repeat_requests(self) -> None:
+        original = self.legacy('duty_system_v2.db', 'v2')
+        fingerprint = hashlib.sha256(original.read_bytes()).hexdigest()
+        with app.test_client() as client:
+            self.assertEqual(client.get('/').status_code, 200)
+            dy.register_employee('00000001', '직원', '부서', dy.GROUP_SUK)
+            self.assertEqual(client.get('/').status_code, 200)
+        with dy.get_conn() as conn:
+            self.assertEqual(conn.execute('SELECT value FROM marker').fetchone()[0], 'v2')
+            self.assertEqual(conn.execute('SELECT count(*) FROM employees').fetchone()[0], 1)
+        self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(), fingerprint)
+
+    def test_web_temporary_database_never_imports_default_v2(self) -> None:
+        self.data.mkdir()
+        with sqlite3.connect(dy.V2_DB_NAME) as conn:
+            conn.execute('CREATE TABLE marker(value TEXT)')
+        with patch.object(dy, 'DB_NAME', str(self.root / 'isolated/web.db')):
+            with app.test_client() as client:
+                self.assertEqual(client.get('/').status_code, 200)
+            with dy.get_conn() as conn:
+                self.assertIsNone(conn.execute("SELECT name FROM sqlite_master WHERE name='marker'").fetchone())
+        self.assertFalse(Path(self.default).exists())

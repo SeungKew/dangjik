@@ -136,7 +136,7 @@ def migrate_v2_to_v3() -> None:
     _prepare_database_path()
     if os.path.exists(DB_NAME):
         return
-    if os.path.exists(V2_DB_NAME):
+    if os.path.abspath(DB_NAME) == DEFAULT_DB_NAME and os.path.exists(V2_DB_NAME):
         shutil.copyfile(V2_DB_NAME, DB_NAME)
         print(f"[이관] {V2_DB_NAME} -> {DB_NAME} 복사 완료")
     init_db()

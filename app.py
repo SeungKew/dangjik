@@ -23,6 +23,13 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('DANGJIK_SECRET_KEY', 'dangjik-local-secret')
 
 
+@app.before_request
+def prepare_database() -> None:
+    """직접 실행·Flask CLI·WSGI 모두 조회 전에 DB와 스키마를 준비한다."""
+    dy.migrate_v2_to_v3()
+    dy.init_db()
+
+
 @app.context_processor
 def inject_nav() -> dict:
     nav = [

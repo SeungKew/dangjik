@@ -8,6 +8,7 @@
   - 스킵 복귀 트랙: skip_queue.pointer_key에 스킵 당시 순번을 저장하고 동일 트랙으로만 익익월 복귀(평일 숙직↔평일, 휴일 숙직↔휴일). init_db에서 구 큐는 스킵일/현재 그룹으로 보완하며 기존 완료 여부와 명시된 트랙 보존.
   - CLI 실행: `.venv/bin/python dangjik_basic1.py` (메뉴 루프: 초기데이터/배정생성/수동배정/조회)
 - 웹 앱: `app.py` (Flask) — 모든 DB 로직은 `dangjik_basic1.py`를 import해 재사용하므로 배정 규칙 변경은 이 모듈에서만 (app.py 라우트는 얇게 유지)
+  - DB 준비: before_request에서 이관/스키마초기화를 호출하여 직접실행·Flask CLI·WSGI 모두 첫요청 전에 준비. DB/폴더가 없거나 빈파일이면 자동생성. 기본DB경로에서만 v2를 자동이관하며 dy.DB_NAME 임시교체시 운영v2를 복사하지 않음.
   - 실행: `.venv/bin/python app.py` → http://localhost:5001
   - 기능: 엑셀 입력양식 업로드 / 배정 생성(월 단위) / 수동 예외 배정(벌당직) / 직원 변동(퇴사·승진) 처리 / 시스템 관리(/admin — 전체 DB 초기화, 월 데이터 삭제: 확인 문구 + 백업 사본)
   - 월 삭제 안전성: 생성 시 포인터 스냅샷(system_state_snapshot) 자동 기록 → 지우고 재생성하면 처음과 동일. 스냅샷 없는 구월은 이력 기반 폴백(결과 달라질 수 있음)

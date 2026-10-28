@@ -1,5 +1,11 @@
 # PROGRESS.md
 
+## 2026-10-28: DB 없는 웹 실행 시 테이블 누락 오류 수정
+- 임시경로의 data/와 v3/v2가 모두없는 상태에서 app을 import하여 첫 GET / 요청시 sqlite3.OperationalError: no such table: duty_history 재현. 기존 초기화가 __main__에만 있어 Flask CLI/WSGI 등 import실행에서는 생략됐으며 get_conn은 빈DB파일만 생성했음.
+- app.before_request에서 migrate_v2_to_v3/init_db를 호출하여 DB·스키마를 조회전에 준비. 없는폴더/없는DB/0바이트파일 및 실행중삭제후 다음요청을 지원, 기존행과설정은 보존. 임시DB경로에서 운영v2가 섞이지 않도록 migrate_v2_to_v3의 v2복사를 기본경로에만 제한.
+- 신규4건회귀: 새DB첫접속·7화면응답, 빈파일/실행중삭제 복구, v2이관/반복요청 데이터보존, 임시DB의기본v2격리. 경로테스트8건 통과(8.133초), app.py/dangjik_basic1.py/경로테스트 py_compile·diff검사 통과. 전체회귀/보호파일검증은 아래기록. 기존미완료과제 유지.
+- 전체77개 unittest 통과(98.575초, 원본월별205/205회귀 포함). 운영v3/보존v2 및 docs엑셀 총13개 SHA-256불변 확인. 실제운영DB의삭제/초기화/이관은 실행하지 않음.
+
 ## 2026-10-28: 배정 생성 대상 연월에 현재 월 기본값 적용
 - GET /generate에서 한국시간(UTC+9) 기준 현재연월을 계산하여 템플릿에 전달, 대상연월 input의 value에 YYYY-MM으로 표시. 사용자입력/월이동과 POST의 선택월처리는 유지.
 - 임시DB Flask test_client에서 현재월2026-10 기본표시, UTC월말/연말15시의 한국시간 다음월/다음해 기본값, 사용자가 변경한2027-02의 POST 전달 검증. app.py/dangjik_basic1.py py_compile 통과, 운영v3/보존v2 SHA-256불변 확인. 전체회귀결과는 아래기록.
