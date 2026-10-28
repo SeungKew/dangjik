@@ -181,7 +181,8 @@ def generate() -> str:
             return redirect(url_for('generate'))
         flash(f'{year_month} 배정 생성 완료.', 'success')
         return redirect(url_for('dashboard', month=year_month))
-    return render_template('generate.html')
+    year_month = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%Y-%m')
+    return render_template('generate.html', year_month=year_month)
 
 
 @app.route('/manual', methods=['GET', 'POST'])
